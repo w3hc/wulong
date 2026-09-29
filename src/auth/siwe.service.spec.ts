@@ -245,24 +245,38 @@ describe('SiweService', () => {
       expect(() => new SiweService()).toThrow('SIWE_DOMAIN');
     });
 
-    it('should accept messages for SIWE_DOMAIN', async () => {
-      process.env.SIWE_DOMAIN = 'wulong.example';
-      const custom = new SiweService();
+    const signIn = async (siwe: SiweService, domain: string) => {
       const wallet = Wallet.createRandom();
       const message = new SiweMessage({
-        domain: 'wulong.example',
+        domain,
         address: wallet.address,
-        uri: 'https://wulong.example',
+        uri: `https://${domain}`,
         version: '1',
         chainId: 1,
-        nonce: custom.generateNonce(),
+        nonce: siwe.generateNonce(),
         issuedAt: new Date().toISOString(),
       }).prepareMessage();
       const signature = await wallet.signMessage(message);
+      const result = await siwe.verifySignature(message, signature);
+      return result === wallet.address;
+    };
 
-      expect(await custom.verifySignature(message, signature)).toBe(
-        wallet.address,
-      );
+    it('should accept every host listed in SIWE_DOMAIN', async () => {
+      process.env.SIWE_DOMAIN = 'app.example, other.example:8443';
+      const custom = new SiweService();
+
+      expect(await signIn(custom, 'app.example')).toBe(true);
+      expect(await signIn(custom, 'other.example:8443')).toBe(true);
+      expect(await signIn(custom, 'localhost')).toBe(false);
+    });
+
+    it('should default to localhost with and without port 3000', async () => {
+      delete process.env.SIWE_DOMAIN;
+      const custom = new SiweService();
+
+      expect(await signIn(custom, 'localhost')).toBe(true);
+      expect(await signIn(custom, 'localhost:3000')).toBe(true);
+      expect(await signIn(custom, 'localhost:4000')).toBe(false);
     });
   });
 

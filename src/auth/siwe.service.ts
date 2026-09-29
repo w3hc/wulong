@@ -17,15 +17,18 @@ export class SiweService {
   // Tolerated clock drift between the client and the server
   private readonly CLOCK_SKEW = 30 * 1000;
 
-  // Domain SIWE messages must be signed for
-  private readonly domain: string;
+  // Hosts (with port) of the UIs allowed to request a signature
+  private readonly domains: string[];
 
   constructor() {
-    const domain = process.env.SIWE_DOMAIN;
-    if (!domain && process.env.NODE_ENV === 'production') {
+    const domains = (process.env.SIWE_DOMAIN ?? '')
+      .split(',')
+      .map((domain) => domain.trim())
+      .filter(Boolean);
+    if (!domains.length && process.env.NODE_ENV === 'production') {
       throw new Error('SIWE_DOMAIN must be set in production');
     }
-    this.domain = domain || 'localhost';
+    this.domains = domains.length ? domains : ['localhost', 'localhost:3000'];
   }
 
   /**
@@ -80,10 +83,14 @@ export class SiweService {
         return null;
       }
 
+      if (!this.domains.includes(siweMessage.domain)) {
+        return null;
+      }
+
       // Enforces signature, domain, nonce, Expiration Time and Not Before
       const fields = await siweMessage.verify({
         signature,
-        domain: this.domain,
+        domain: siweMessage.domain,
         nonce: nonceEntry.nonce,
         time: new Date(now).toISOString(),
       });
