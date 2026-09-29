@@ -1,5 +1,5 @@
 import { plainToInstance } from 'class-transformer';
-import { IsEnum, IsUrl, validateSync } from 'class-validator';
+import { IsEnum, IsInt, IsUrl, Min, validateSync } from 'class-validator';
 
 /**
  * Environment configuration schema.
@@ -11,6 +11,16 @@ export class EnvironmentVariables {
 
   @IsUrl({ require_tld: false })
   KMS_URL?: string;
+
+  // Rate limit window, in milliseconds
+  @IsInt()
+  @Min(1)
+  THROTTLE_TTL?: number;
+
+  // Requests allowed per IP within the window
+  @IsInt()
+  @Min(1)
+  THROTTLE_LIMIT?: number;
 }
 
 /**

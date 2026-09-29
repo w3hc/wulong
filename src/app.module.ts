@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
-import { ThrottlerModule } from '@nestjs/throttler';
+import { APP_GUARD } from '@nestjs/core';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { SecretsService } from './config/secrets.service';
@@ -19,17 +20,25 @@ import { AuthModule } from './auth/auth.module';
       validate: validateEnvironment,
     }),
     // Rate limiting to prevent DoS attacks
-    ThrottlerModule.forRoot([
-      {
-        ttl: 60000, // 60 seconds
-        limit: 10, // 10 requests per minute per IP
-      },
-    ]),
+    ThrottlerModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => [
+        {
+          ttl: Number(config.get('THROTTLE_TTL') ?? 60000),
+          limit: Number(config.get('THROTTLE_LIMIT') ?? 10),
+        },
+      ],
+    }),
     AuthModule,
     SecretModule,
   ],
   controllers: [AppController, AttestationController, HealthController],
-  providers: [AppService, SecretsService, TeePlatformService],
+  providers: [
+    AppService,
+    SecretsService,
+    TeePlatformService,
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
+  ],
   exports: [SecretsService, TeePlatformService],
 })
 export class AppModule {}
