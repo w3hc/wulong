@@ -1,8 +1,14 @@
-import { Controller, Get, INestApplication } from '@nestjs/common';
+import { Controller, Get, Req } from '@nestjs/common';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
+import { Request } from 'express';
 import request from 'supertest';
 import { App } from 'supertest/types';
-import { configureCors, parseCorsOrigins } from './http-config';
+import {
+  configureCors,
+  configureTrustProxy,
+  parseCorsOrigins,
+} from './http-config';
 
 @Controller()
 class PingController {
@@ -10,15 +16,20 @@ class PingController {
   ping() {
     return 'pong';
   }
+
+  @Get('ip')
+  ip(@Req() req: Request) {
+    return { ip: req.ip };
+  }
 }
 
 async function createApp(
-  setup: (app: INestApplication) => void,
-): Promise<INestApplication<App>> {
+  setup: (app: NestExpressApplication) => void,
+): Promise<NestExpressApplication> {
   const module = await Test.createTestingModule({
     controllers: [PingController],
   }).compile();
-  const app = module.createNestApplication<INestApplication<App>>();
+  const app = module.createNestApplication<NestExpressApplication>();
   setup(app);
   await app.init();
   return app;
@@ -46,7 +57,7 @@ describe('parseCorsOrigins', () => {
 });
 
 describe('configureCors', () => {
-  let app: INestApplication<App>;
+  let app: NestExpressApplication;
   const allowed = 'https://app.example.com';
 
   beforeAll(async () => {
@@ -98,5 +109,33 @@ describe('configureCors', () => {
     await closed.close();
 
     expect(res.headers['access-control-allow-origin']).toBeUndefined();
+  });
+});
+
+describe('configureTrustProxy', () => {
+  const peer = /^(::ffff:)?127\.0\.0\.1$|^::1$/;
+
+  async function ipSeen(tlsInEnclave: boolean, forwardedFor: string) {
+    const app = await createApp((a) => configureTrustProxy(a, tlsInEnclave));
+    const res = await request(app.getHttpServer() as App)
+      .get('/ip')
+      .set('X-Forwarded-For', forwardedFor)
+      .expect(200);
+    await app.close();
+    return (res.body as { ip: string }).ip;
+  }
+
+  it('ignores X-Forwarded-For when TLS terminates in the enclave', async () => {
+    expect(await ipSeen(true, '203.0.113.7')).toMatch(peer);
+  });
+
+  it('trusts the hop the proxy appended when TLS terminates outside', async () => {
+    expect(await ipSeen(false, '203.0.113.7')).toBe('203.0.113.7');
+  });
+
+  it('ignores entries a client forged before the proxy hop', async () => {
+    expect(await ipSeen(false, '198.51.100.1, 203.0.113.7')).toBe(
+      '203.0.113.7',
+    );
   });
 });

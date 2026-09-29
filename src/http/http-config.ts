@@ -1,4 +1,5 @@
 import { INestApplication } from '@nestjs/common';
+import { NestExpressApplication } from '@nestjs/platform-express';
 
 /**
  * Parses CORS_ORIGINS, a comma-separated list of origins such as
@@ -33,4 +34,16 @@ export function configureCors(app: INestApplication, origins: string[]): void {
     origin: origins,
     allowedHeaders: ['Content-Type', 'X-SIWE-Message', 'X-SIWE-Signature'],
   });
+}
+
+// Only a TLS-terminating proxy (the ALLOW_TLS_OUTSIDE_ENCLAVE opt-out) sets
+// X-Forwarded-For; with passthrough, clients could forge it to dodge rate limits.
+// One hop: the proxy appends the peer address, earlier entries are client-supplied
+export function configureTrustProxy(
+  app: NestExpressApplication,
+  tlsInEnclave: boolean,
+): void {
+  if (!tlsInEnclave) {
+    app.set('trust proxy', 1);
+  }
 }
