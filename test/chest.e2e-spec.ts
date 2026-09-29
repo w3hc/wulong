@@ -319,6 +319,8 @@ describe('Chest Endpoints (e2e)', () => {
         .set('x-siwe-message', Buffer.from(message).toString('base64'))
         .set('x-siwe-signature', signature)
         .expect(200)
+        .expect('Cache-Control', 'no-store')
+        .expect('Pragma', 'no-cache')
         .expect((res) => {
           expect(res.body).toHaveProperty('secret');
           expect((res.body as { secret: string }).secret).toBeDefined();

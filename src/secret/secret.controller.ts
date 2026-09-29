@@ -2,6 +2,7 @@ import {
   Controller,
   Post,
   Get,
+  Header,
   Param,
   Body,
   UseGuards,
@@ -84,6 +85,9 @@ export class SecretController {
 
   @Get('access/:slot')
   @UseGuards(SiweGuard)
+  // The body is plaintext; no cache along the way may keep it
+  @Header('Cache-Control', 'no-store')
+  @Header('Pragma', 'no-cache')
   @ApiSecurity('SIWE')
   @ApiOperation({
     summary: 'Access a secret (server-side decryption)',
