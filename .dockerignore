@@ -5,5 +5,9 @@ coverage
 .github
 *.md
 .env
+.env.*
 .DS_Store
 test
+secrets
+chest.json
+notes
