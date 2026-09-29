@@ -1,6 +1,7 @@
 import { plainToInstance } from 'class-transformer';
 import {
   IsEnum,
+  IsIn,
   IsInt,
   IsString,
   IsUrl,
@@ -37,6 +38,14 @@ export class EnvironmentVariables {
   @IsInt()
   @Min(1)
   CHEST_MAX_BYTES?: number;
+
+  // Gateway hostnames the in-enclave TLS certificate is issued for, comma-separated
+  @IsString()
+  TLS_ALT_NAMES?: string;
+
+  // Serve plain HTTP behind a TLS-terminating proxy; secrets then leave the enclave in clear
+  @IsIn(['true', 'false'])
+  ALLOW_TLS_OUTSIDE_ENCLAVE?: string;
 }
 
 /**
