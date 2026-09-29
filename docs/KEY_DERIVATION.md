@@ -1,6 +1,6 @@
 # Enclave-Derived Keys
 
-Design for how Wulong obtains its long-lived private keys so that they exist only inside the attested enclave, and no one, the operator included, can obtain them. Tracks [#31](https://github.com/w3hc/wulong/issues/31). **Status:** ML-KEM and identity key derivation are implemented ([#33](https://github.com/w3hc/wulong/issues/33)), and `GET /chest/attestation` serves the key manifest and the new `report_data` ([#35](https://github.com/w3hc/wulong/issues/35)); the relayer wallet, TLS inside the enclave and on-chain governance are not yet.
+Design for how Wulong obtains its long-lived private keys so that they exist only inside the attested enclave, and no one, the operator included, can obtain them. Tracks [#31](https://github.com/w3hc/wulong/issues/31). **Status:** ML-KEM and identity key derivation are implemented ([#33](https://github.com/w3hc/wulong/issues/33)), and `GET /chest/attestation` serves the key manifest and the new `report_data` ([#35](https://github.com/w3hc/wulong/issues/35)), and TLS terminates inside the enclave with its leaf certificate bound into `report_data` ([#37](https://github.com/w3hc/wulong/issues/37)); the relayer wallet and on-chain governance are not yet.
 
 ## Table of Contents
 
@@ -114,7 +114,7 @@ report_data[0..32]  = SHA-256( LP("wulong-report-v1") || LP(ek) || LP(relayer)
 report_data[32..64] = client nonce (32 bytes), or zeros if none was sent
 ```
 
-This supersedes the `SHA-256(pk) || SHA-256(cert)` layout used by zk-api: one hash commits to every key, and the second half carries a client challenge for freshness. The TLS certificate term is empty until TLS terminates inside the enclave.
+This supersedes the `SHA-256(pk) || SHA-256(cert)` layout used by zk-api: one hash commits to every key, and the second half carries a client challenge for freshness. The TLS certificate is the leaf of the chain the dstack KMS issues to the app (`GetTlsKey`), whose private key is generated inside the CVM and never leaves it. A client checks that the certificate of its TLS session is the one committed to here, which proves the session ends inside the enclave rather than at a proxy. The term is empty only under the `ALLOW_TLS_OUTSIDE_ENCLAVE` opt-out, where clients must refuse to send secrets.
 
 ## Verification
 

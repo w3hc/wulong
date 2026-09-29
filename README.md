@@ -73,8 +73,12 @@ docker buildx build --platform linux/amd64 -t YOUR_USERNAME/wulong:latest --push
 # Deploy to Phala Cloud
 phala deploy --interactive
 
-# Test against Phala deployment
-WULONG_URL=https://your-app-id-3000.phala.network pnpm test:store-access
+# Verify the attestation, including that TLS terminates in the enclave
+pnpm verify:attestation https://your-app-id-3000s.phala.network/chest/attestation
+
+# Test against Phala deployment. The certificate comes from the dstack KMS CA,
+# not a public CA: skip the trust store only once verify:attestation passes
+NODE_TLS_REJECT_UNAUTHORIZED=0 WULONG_URL=https://your-app-id-3000s.phala.network pnpm test:store-access
 ```
 
 ## Rate Limiting
@@ -87,7 +91,7 @@ Every route is rate-limited per client IP, and each route has its own counter:
 | Window | 60 s | `THROTTLE_TTL` (ms) |
 | Pending SIWE nonces | 10,000 | — |
 
-Past a limit, the API answers `429 Too Many Requests`. Once 10,000 nonces are pending, `POST /auth/nonce` is rejected until some are used or expire (5 minutes); live nonces are never evicted. In production the client IP is read from `X-Forwarded-For`, set by Phala's proxy.
+Past a limit, the API answers `429 Too Many Requests`. Once 10,000 nonces are pending, `POST /auth/nonce` is rejected until some are used or expire (5 minutes); live nonces are never evicted. With TLS terminating in the enclave, the gateway forwards encrypted bytes and cannot add `X-Forwarded-For`, so the client IP is the gateway's and every client shares one counter. `X-Forwarded-For` is trusted only under the `ALLOW_TLS_OUTSIDE_ENCLAVE` opt-out.
 
 ## Storage
 
