@@ -10,6 +10,7 @@ import * as path from 'path';
 import { MlKemEncryptionService } from '../src/encryption/mlkem-encryption.service';
 import { KeyDerivationService } from '../src/keys/key-derivation.service';
 import { buildReportData } from '../src/attestation/report-data';
+import { TeeTlsService } from '../src/tls/tee-tls.service';
 
 // Helper to create a valid encrypted payload for testing
 const createMockEncryptedPayload = () => {
@@ -110,6 +111,11 @@ describe('Chest Endpoints (e2e)', () => {
           signature: '0x' + '33'.repeat(65),
         }),
         getIdentitySignatureChain: () => [new Uint8Array([0xaa])],
+      })
+      .overrideProvider(TeeTlsService)
+      .useValue({
+        getServerOptions: () => null,
+        getLeafCertificateDer: () => new Uint8Array([0x30, 0x03]),
       })
       .compile();
 
@@ -718,10 +724,12 @@ describe('Chest Endpoints (e2e)', () => {
             {
               mlkemPublicKey: new Uint8Array(1568).fill(0x01),
               identityPublicKey: new Uint8Array(65).fill(0x04),
+              tlsCertificateDer: new Uint8Array([0x30, 0x03]),
             },
             Buffer.from(nonce, 'hex'),
           );
           expect(body.reportData).toBe(`0x${expected.toString('hex')}`);
+          expect(res.body).toHaveProperty('tlsCertificate', 'MAM=');
           expect(res.body).toHaveProperty('keyManifest.manifest.appId');
           expect(res.body).toHaveProperty('identitySignatureChain', ['0xaa']);
         });

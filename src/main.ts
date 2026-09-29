@@ -17,21 +17,6 @@ async function bootstrap() {
     logger: isProd ? new SanitizedLogger() : undefined,
   });
 
-  // TLS terminates in the enclave; its certificate is only known once DI has
-  // run, so the server is created here rather than by NestFactory
-  const tlsOptions = app.get(TeeTlsService).getServerOptions();
-  if (!tlsOptions && !isProd) {
-    throw new Error(
-      'No TLS certificate: create secrets/tls.key and secrets/tls.cert, see README.md',
-    );
-  }
-
-  // Only a TLS-terminating proxy (the ALLOW_TLS_OUTSIDE_ENCLAVE opt-out) sets
-  // X-Forwarded-For; with passthrough, clients could forge it to dodge rate limits
-  if (!tlsOptions) {
-    app.set('trust proxy', 1);
-  }
-
   // Security headers - protects against common web vulnerabilities
   app.use(helmet());
 
@@ -65,7 +50,26 @@ async function bootstrap() {
   // Graceful shutdown handling
   app.enableShutdownHooks();
 
+  // Runs onModuleInit, which is where TeeTlsService obtains the certificate
   await app.init();
+
+  // TLS terminates in the enclave; its certificate is only known once the app
+  // is initialized, so the server is created here rather than by NestFactory
+  const tlsOptions = app.get(TeeTlsService).getServerOptions();
+  if (!tlsOptions && !isProd) {
+    throw new Error(
+      'No TLS certificate: create secrets/tls.key and secrets/tls.cert, see README.md',
+    );
+  }
+  if (!tlsOptions && process.env.ALLOW_TLS_OUTSIDE_ENCLAVE !== 'true') {
+    throw new Error('Refusing to serve plain HTTP without in-enclave TLS');
+  }
+
+  // Only a TLS-terminating proxy (the ALLOW_TLS_OUTSIDE_ENCLAVE opt-out) sets
+  // X-Forwarded-For; with passthrough, clients could forge it to dodge rate limits
+  if (!tlsOptions) {
+    app.set('trust proxy', 1);
+  }
 
   const port = 3000;
   const handler = app.getHttpAdapter().getInstance();

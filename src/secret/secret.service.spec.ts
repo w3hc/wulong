@@ -10,6 +10,7 @@ import { SecretService } from './secret.service';
 import { TeePlatformService } from '../attestation/tee-platform.service';
 import { buildReportData } from '../attestation/report-data';
 import { KeyDerivationService } from '../keys/key-derivation.service';
+import { TeeTlsService } from '../tls/tee-tls.service';
 import { MlKemEncryptionService } from '../encryption/mlkem-encryption.service';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -68,6 +69,10 @@ describe('SecretService', () => {
     getIdentitySignatureChain: jest.fn(),
   };
 
+  const mockTeeTlsService = {
+    getLeafCertificateDer: jest.fn(),
+  };
+
   // Helper to create a valid encrypted payload
   const createMockEncryptedPayload = (publicKey?: string) => {
     // Create 1600 bytes of data (1568 KEM + 32 encrypted AES key)
@@ -105,6 +110,10 @@ describe('SecretService', () => {
         {
           provide: KeyDerivationService,
           useValue: mockKeyDerivationService,
+        },
+        {
+          provide: TeeTlsService,
+          useValue: mockTeeTlsService,
         },
       ],
     }).compile();
@@ -710,10 +719,33 @@ describe('SecretService', () => {
         publicKey: undefined,
         mlkemPublicKey: Buffer.from(mlkemPublicKey).toString('base64'),
         identityPublicKey: `0x${Buffer.from(identityPublicKey).toString('hex')}`,
+        tlsCertificate: undefined,
         reportData: `0x${expected.toString('hex')}`,
         keyManifest,
         identitySignatureChain: ['0xaabb', '0xcc'],
       });
+    });
+
+    it('commits report_data to the TLS certificate served in the enclave', async () => {
+      const tlsCertificateDer = new Uint8Array([0x30, 0x82, 0x01]);
+      mockTeeTlsService.getLeafCertificateDer.mockReturnValue(
+        tlsCertificateDer,
+      );
+      const expected = buildReportData({
+        mlkemPublicKey,
+        identityPublicKey,
+        tlsCertificateDer,
+      });
+
+      const result = await service.getAttestation();
+
+      expect(
+        mockTeePlatformService.generateAttestationReport,
+      ).toHaveBeenCalledWith(expected);
+      expect(result.reportData).toBe(`0x${expected.toString('hex')}`);
+      expect(result.tlsCertificate).toBe(
+        Buffer.from(tlsCertificateDer).toString('base64'),
+      );
     });
 
     it('places the client nonce in report_data', async () => {

@@ -1,4 +1,4 @@
-import { SignedKeyManifest } from '../../keys/key-derivation.service';
+import type { SignedKeyManifest } from '../../keys/key-derivation.service';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class AttestationResponseDto {
@@ -51,7 +51,15 @@ export class AttestationResponseDto {
 
   @ApiProperty({
     description:
-      'The 64 bytes of report_data in the quote (hex): SHA-256 commitment to the public keys, ' +
+      'Leaf TLS certificate served from inside the enclave (base64 DER), committed to by reportData. ' +
+      'Clients check it matches the certificate of their TLS session. Absent when TLS terminates outside the enclave.',
+    required: false,
+  })
+  tlsCertificate?: string;
+
+  @ApiProperty({
+    description:
+      'The 64 bytes of report_data in the quote (hex): SHA-256 commitment to the public keys and TLS certificate, ' +
       'then the client nonce or zeros. See docs/KEY_DERIVATION.md#report_data.',
     example: '0xab74ab29...',
   })
