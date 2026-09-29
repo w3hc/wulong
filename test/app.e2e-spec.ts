@@ -3,6 +3,10 @@ import { INestApplication, ValidationPipe } from '@nestjs/common';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from './../src/app.module';
+import {
+  MAX_JITTER_MS,
+  MIN_RESPONSE_MS,
+} from './../src/interceptors/timing-protection.interceptor';
 
 describe('Application (e2e)', () => {
   let app: INestApplication<App>;
@@ -119,13 +123,13 @@ describe('Application (e2e)', () => {
   });
 
   describe('Response Time (e2e)', () => {
-    it('health endpoint should respond quickly', async () => {
+    it('health endpoint should respond at the timing floor', async () => {
       const start = Date.now();
       await request(app.getHttpServer()).get('/health').expect(200);
       const duration = Date.now() - start;
 
-      // Health check should respond in less than 100ms
-      expect(duration).toBeLessThan(100);
+      expect(duration).toBeGreaterThanOrEqual(MIN_RESPONSE_MS);
+      expect(duration).toBeLessThan(MIN_RESPONSE_MS + MAX_JITTER_MS + 100);
     });
   });
 

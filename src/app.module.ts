@@ -1,5 +1,5 @@
 import { Module } from '@nestjs/common';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { AppController } from './app.controller';
@@ -11,6 +11,7 @@ import { validateEnvironment } from './config/env.validation';
 import { SecretModule } from './secret/secret.module';
 import { AuthModule } from './auth/auth.module';
 import { TlsModule } from './tls/tls.module';
+import { TimingProtectionInterceptor } from './interceptors/timing-protection.interceptor';
 
 @Module({
   imports: [
@@ -39,6 +40,7 @@ import { TlsModule } from './tls/tls.module';
     AppService,
     SecretsService,
     { provide: APP_GUARD, useClass: ThrottlerGuard },
+    { provide: APP_INTERCEPTOR, useClass: TimingProtectionInterceptor },
   ],
   exports: [SecretsService],
 })
