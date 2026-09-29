@@ -88,6 +88,17 @@ Every route is rate-limited per client IP, and each route has its own counter:
 
 Past a limit, the API answers `429 Too Many Requests`. Once 10,000 nonces are pending, `POST /auth/nonce` is rejected until some are used or expire (5 minutes); live nonces are never evicted. In production the client IP is read from `X-Forwarded-For`, set by Phala's proxy.
 
+## Storage
+
+Secrets are stored, encrypted, in a single JSON file. Writes are serialized within the process and saved atomically (temp file, then rename).
+
+| Setting | Default | Env var |
+| --- | --- | --- |
+| Chest file | `<cwd>/chest.json` | `CHEST_PATH` |
+| Maximum chest size | 50 MB | `CHEST_MAX_BYTES` (bytes) |
+
+`docker-compose.yml` keeps the chest at `/app/data/chest.json` on the `wulong-data` named volume, so it survives redeploys. A store that would push the chest past the cap is rejected with `507 Insufficient Storage`. The lock is per process: run a single replica.
+
 ## Docs
 
 ### Setup & Deployment
