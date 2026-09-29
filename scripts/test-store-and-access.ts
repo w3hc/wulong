@@ -5,7 +5,7 @@
  * This script tests:
  * 1. Get attestation (with ML-KEM public key)
  * 2. Encrypt secret for client + server
- * 3. Store encrypted secret
+ * 3. Store encrypted secret with SIWE authentication
  * 4. Access secret with SIWE authentication (using test wallet)
  *
  * Prerequisites:
@@ -98,6 +98,43 @@ async function encryptMultiRecipient(
   };
 }
 
+/**
+ * Sign in with Ethereum and return the headers expected by SiweGuard
+ */
+async function siweHeaders(
+  serverUrl: string,
+  wallet: Wallet,
+  statement: string,
+): Promise<Record<string, string>> {
+  const nonceResponse = await fetch(`${serverUrl}/auth/nonce`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ address: wallet.address }),
+  });
+
+  if (!nonceResponse.ok) {
+    throw new Error(`Nonce request failed: ${nonceResponse.status}`);
+  }
+
+  const { nonce } = (await nonceResponse.json()) as { nonce: string };
+
+  const message = new SiweMessage({
+    domain: new URL(serverUrl).hostname,
+    address: wallet.address,
+    uri: serverUrl,
+    version: '1',
+    chainId: 1,
+    nonce,
+    issuedAt: new Date().toISOString(),
+    statement,
+  }).prepareMessage();
+
+  return {
+    'x-siwe-message': Buffer.from(message).toString('base64'),
+    'x-siwe-signature': await wallet.signMessage(message),
+  };
+}
+
 async function testStoreAndAccess() {
   console.log(
     '🧪 Testing ML-KEM store and access flow with SIWE authentication\n',
@@ -164,10 +201,17 @@ async function testStoreAndAccess() {
     );
 
     // Step 4: Store encrypted secret
-    console.log('4️⃣  Storing encrypted secret on server...');
+    console.log('4️⃣  Storing encrypted secret on server (with SIWE)...');
     const storeResponse = await fetch(`${serverUrl}/chest/store`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(await siweHeaders(
+          serverUrl,
+          wallet,
+          'Store encrypted secret in wulong',
+        )),
+      },
       body: JSON.stringify({
         secret: encrypted,
         publicAddresses: [wallet.address],
