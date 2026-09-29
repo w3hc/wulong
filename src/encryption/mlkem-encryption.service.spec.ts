@@ -29,7 +29,7 @@ describe('MlKemEncryptionService', () => {
     }).compile();
 
     const created = module.get<MlKemEncryptionService>(MlKemEncryptionService);
-    await created.onModuleInit();
+    created.onModuleInit();
     return created;
   };
 
@@ -202,67 +202,83 @@ describe('MlKemEncryptionService', () => {
       const decrypted = service.decryptMultiRecipient(encrypted);
       expect(decrypted).toBe(plaintext);
     });
+    it('should reject a tampered wrapped key', async () => {
+      const encrypted = await encryptMultiRecipient('Test', [
+        service.getPublicKey()!,
+      ]);
+      const combined = Buffer.from(
+        encrypted.recipients[0].ciphertext,
+        'base64',
+      );
+      combined[combined.length - 1] ^= 0x01;
+      encrypted.recipients[0].ciphertext = combined.toString('base64');
+
+      const error = thrownBy(() => service.decryptMultiRecipient(encrypted));
+      expect(error.message).toBe('Failed to decrypt multi-recipient data');
+      expect((error.cause as Error).message).toBe(
+        'Wrapped AES key failed integrity check',
+      );
+    });
+
+    it('should reject an IV that is not 12 bytes', async () => {
+      const encrypted = await encryptMultiRecipient('Test', [
+        service.getPublicKey()!,
+      ]);
+      encrypted.iv = crypto.randomBytes(16).toString('base64');
+
+      const error = thrownBy(() => service.decryptMultiRecipient(encrypted));
+      expect((error.cause as Error).message).toBe(
+        'Invalid IV size: 16 (expected 12)',
+      );
+    });
+
+    it('should reject a truncated auth tag', async () => {
+      const encrypted = await encryptMultiRecipient('Test', [
+        service.getPublicKey()!,
+      ]);
+      encrypted.authTag = Buffer.from(encrypted.authTag, 'base64')
+        .subarray(0, 4)
+        .toString('base64');
+
+      const error = thrownBy(() => service.decryptMultiRecipient(encrypted));
+      expect((error.cause as Error).message).toBe(
+        'Invalid auth tag size: 4 (expected 16)',
+      );
+    });
+
+    it('should reject an unknown payload version', async () => {
+      const encrypted = await encryptMultiRecipient('Test', [
+        service.getPublicKey()!,
+      ]);
+      (encrypted as { version: number }).version = 3;
+
+      const error = thrownBy(() => service.decryptMultiRecipient(encrypted));
+      expect((error.cause as Error).message).toBe(
+        'Unsupported payload version: 3',
+      );
+    });
   });
 
-  describe('Legacy Single-Recipient Encryption/Decryption', () => {
-    it('should encrypt and decrypt with legacy format', () => {
-      const plaintext = 'Legacy encryption test';
+  describe('Legacy v1 payloads', () => {
+    it('should decrypt a payload without a version', async () => {
+      const plaintext = 'Legacy XOR-wrapped payload';
+      const encrypted = await encryptMultiRecipientV1(plaintext, [
+        service.getPublicKey()!,
+      ]);
 
-      const encrypted = service.encrypt(plaintext);
-
-      expect(encrypted.ciphertext).toBeTruthy();
-      expect(encrypted.encryptedData).toBeTruthy();
-      expect(encrypted.iv).toBeTruthy();
-      expect(encrypted.authTag).toBeTruthy();
-
-      // Verify sizes
-      const ciphertext = Buffer.from(encrypted.ciphertext, 'base64');
-      expect(ciphertext.length).toBe(1568);
-
-      const decrypted = service.decrypt(encrypted);
-      expect(decrypted).toBe(plaintext);
+      expect(encrypted.version).toBeUndefined();
+      expect(service.decryptMultiRecipient(encrypted)).toBe(plaintext);
     });
 
-    it('should throw error on invalid ciphertext size (legacy)', () => {
-      const encrypted = service.encrypt('test');
-      encrypted.ciphertext = Buffer.from('invalid').toString('base64');
+    it('should reject a v2-sized ciphertext without a version', async () => {
+      const encrypted = await encryptMultiRecipient('Test', [
+        service.getPublicKey()!,
+      ]);
+      delete encrypted.version;
 
-      const error = thrownBy(() => service.decrypt(encrypted));
-      expect(error.message).toBe('Failed to decrypt data');
+      const error = thrownBy(() => service.decryptMultiRecipient(encrypted));
       expect((error.cause as Error).message).toMatch(
-        /Invalid ML-KEM ciphertext size/,
-      );
-    });
-
-    it('should throw error on corrupted auth tag (legacy)', () => {
-      const encrypted = service.encrypt('test');
-      encrypted.authTag = Buffer.from('corrupted_tag').toString('base64');
-
-      expect(() => service.decrypt(encrypted)).toThrow(
-        'Failed to decrypt data',
-      );
-    });
-
-    it('should throw error when decrypt called without initialization', async () => {
-      const uninitializedService = await createService(false);
-
-      const dummyPayload = {
-        ciphertext: 'dummy',
-        encryptedData: 'dummy',
-        iv: 'dummy',
-        authTag: 'dummy',
-      };
-
-      expect(() => uninitializedService.decrypt(dummyPayload)).toThrow(
-        'ML-KEM encryption not initialized',
-      );
-    });
-
-    it('should throw error when encrypt called without initialization', async () => {
-      const uninitializedService = await createService(false);
-
-      expect(() => uninitializedService.encrypt('test')).toThrow(
-        'ML-KEM encryption not initialized',
+        /Invalid combined ciphertext size: 1608 \(expected 1600\)/,
       );
     });
   });
@@ -287,48 +303,76 @@ describe('MlKemEncryptionService', () => {
 
 /**
  * Helper: Encrypt data for multiple recipients using ML-KEM-1024
- * (Simplified version of w3pk's mlkemEncrypt)
+ * (Mirrors w3pk's mlkemEncrypt, v2 format)
  */
 async function encryptMultiRecipient(
   plaintext: string,
   recipientPublicKeys: string[],
 ): Promise<MultiRecipientEncryptedPayload> {
+  return encryptWith(plaintext, recipientPublicKeys, (sharedSecret, aesKey) => {
+    const kek = Buffer.from(
+      crypto.hkdfSync(
+        'sha256',
+        sharedSecret,
+        Buffer.alloc(0),
+        'w3pk-mlkem-kek-v2',
+        32,
+      ),
+    );
+    const cipher = crypto.createCipheriv(
+      'id-aes256-wrap',
+      kek,
+      Buffer.from('A6A6A6A6A6A6A6A6', 'hex'),
+    );
+    return Buffer.concat([cipher.update(aesKey), cipher.final()]);
+  }).then((payload) => ({ version: 2 as const, ...payload }));
+}
+
+/**
+ * Helper: Encrypt with the legacy v1 wrap (AES key XOR-ed with shared secret)
+ */
+function encryptMultiRecipientV1(
+  plaintext: string,
+  recipientPublicKeys: string[],
+): Promise<MultiRecipientEncryptedPayload> {
+  return encryptWith(plaintext, recipientPublicKeys, (sharedSecret, aesKey) => {
+    const wrapped = Buffer.alloc(32);
+    for (let i = 0; i < 32; i++) {
+      wrapped[i] = aesKey[i] ^ sharedSecret[i];
+    }
+    return wrapped;
+  });
+}
+
+async function encryptWith(
+  plaintext: string,
+  recipientPublicKeys: string[],
+  wrap: (sharedSecret: Uint8Array, aesKey: Buffer) => Buffer,
+): Promise<MultiRecipientEncryptedPayload> {
   const mlkem = await createMlKem1024();
 
-  // Generate random AES-256 key
   const aesKey = crypto.randomBytes(32);
   const iv = crypto.randomBytes(12);
 
-  // Encrypt data with AES-256-GCM
   const cipher = crypto.createCipheriv('aes-256-gcm', aesKey, iv);
-  let encrypted = cipher.update(plaintext, 'utf-8');
-  encrypted = Buffer.concat([encrypted, cipher.final()]);
+  const encrypted = Buffer.concat([
+    cipher.update(plaintext, 'utf-8'),
+    cipher.final(),
+  ]);
   const authTag = cipher.getAuthTag();
 
-  // Encapsulate AES key for each recipient
-  const recipients = [];
-
-  for (const pubKeyBase64 of recipientPublicKeys) {
-    const publicKey = Buffer.from(pubKeyBase64, 'base64');
-
-    // Encapsulate to get shared secret
-    const [kemCiphertext, sharedSecret] = mlkem.encap(publicKey);
-
-    // XOR-encrypt the AES key with shared secret
-    const kek = sharedSecret.subarray(0, 32);
-    const encryptedAesKey = Buffer.alloc(32);
-    for (let i = 0; i < 32; i++) {
-      encryptedAesKey[i] = aesKey[i] ^ kek[i];
-    }
-
-    // Combine: ML-KEM ciphertext (1568) + encrypted AES key (32)
-    const combinedCiphertext = Buffer.concat([kemCiphertext, encryptedAesKey]);
-
-    recipients.push({
+  const recipients = recipientPublicKeys.map((pubKeyBase64) => {
+    const [kemCiphertext, sharedSecret] = mlkem.encap(
+      Buffer.from(pubKeyBase64, 'base64'),
+    );
+    return {
       publicKey: pubKeyBase64,
-      ciphertext: combinedCiphertext.toString('base64'),
-    });
-  }
+      ciphertext: Buffer.concat([
+        kemCiphertext,
+        wrap(sharedSecret, aesKey),
+      ]).toString('base64'),
+    };
+  });
 
   return {
     recipients,
