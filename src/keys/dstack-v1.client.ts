@@ -21,12 +21,19 @@ export interface GetTlsKeyResponse {
   leafCertificateDer: Uint8Array;
 }
 
+export interface GetQuoteResponse {
+  /** Raw TDX quote. */
+  quote: Uint8Array;
+  /** JSON event log, which replays RTMR0-3. */
+  eventLog: string;
+}
+
 /**
  * Minimal client for the dstack guest agent v1 API (dstack >= 0.6.0).
  *
- * @phala/dstack-sdk 0.5.x only speaks v0, whose GetKey ignores the algorithm
- * and lets the caller steer the signature chain claim. Wulong's keys are
- * derived with v1 from day one, see docs/KEY_DERIVATION.md.
+ * GetKey uses v1: v0 ignores the algorithm and lets the caller steer the
+ * signature chain claim. Wulong's keys are derived with v1 from day one, see
+ * docs/KEY_DERIVATION.md.
  *
  * Talks to the unix socket, or to DSTACK_SIMULATOR_ENDPOINT (a socket path
  * or an http URL) when set.
@@ -85,6 +92,25 @@ export class DstackV1Client {
       key: result.key,
       certificateChain: chain,
       leafCertificateDer: new Uint8Array(new X509Certificate(chain[0]).raw),
+    };
+  }
+
+  /**
+   * A TDX quote over `reportData`, which the guest agent zero-pads to 64 bytes.
+   */
+  async getQuote(reportData: Uint8Array): Promise<GetQuoteResponse> {
+    if (reportData.length > 64) {
+      throw new Error('report_data must be at most 64 bytes');
+    }
+    const result = await this.call('/GetQuote', {
+      report_data: Buffer.from(reportData).toString('hex'),
+    });
+    if (typeof result.event_log !== 'string') {
+      throw new Error('dstack GetQuote returned no event_log');
+    }
+    return {
+      quote: decodeHex(result.quote, 'quote'),
+      eventLog: result.event_log,
     };
   }
 

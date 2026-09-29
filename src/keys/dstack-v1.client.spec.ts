@@ -180,6 +180,43 @@ describe('DstackV1Client', () => {
     );
   });
 
+  it('requests a quote over hex report_data and decodes it', async () => {
+    const socket = path.join(tmpDir, 'dstack.sock');
+    await listen(socket);
+    process.env.DSTACK_SIMULATOR_ENDPOINT = socket;
+    reply.body = JSON.stringify({
+      quote: '0x' + 'ee'.repeat(632),
+      event_log: '[]',
+      report_data: '11'.repeat(64),
+      vm_config: '{}',
+    });
+
+    const result = await new DstackV1Client().getQuote(Buffer.alloc(64, 0x11));
+
+    expect(requests).toEqual([
+      { url: '/GetQuote', body: { report_data: '11'.repeat(64) } },
+    ]);
+    expect(Buffer.from(result.quote)).toEqual(Buffer.alloc(632, 0xee));
+    expect(result.eventLog).toBe('[]');
+  });
+
+  it('refuses report_data longer than 64 bytes', async () => {
+    await expect(
+      new DstackV1Client().getQuote(Buffer.alloc(65)),
+    ).rejects.toThrow('at most 64 bytes');
+  });
+
+  it('rejects a quote response without an event log', async () => {
+    const socket = path.join(tmpDir, 'dstack.sock');
+    await listen(socket);
+    process.env.DSTACK_SIMULATOR_ENDPOINT = socket;
+    reply.body = JSON.stringify({ quote: 'ee' });
+
+    await expect(
+      new DstackV1Client().getQuote(Buffer.alloc(64)),
+    ).rejects.toThrow('no event_log');
+  });
+
   it('rejects when the socket is unreachable', async () => {
     process.env.DSTACK_SIMULATOR_ENDPOINT = path.join(tmpDir, 'missing.sock');
 
