@@ -11,6 +11,7 @@ import { HealthController } from './health/health.controller';
 import { validateEnvironment } from './config/env.validation';
 import { SecretModule } from './secret/secret.module';
 import { AuthModule } from './auth/auth.module';
+import { TlsModule } from './tls/tls.module';
 
 @Module({
   imports: [
@@ -31,6 +32,7 @@ import { AuthModule } from './auth/auth.module';
     }),
     AuthModule,
     SecretModule,
+    TlsModule,
   ],
   controllers: [AppController, AttestationController, HealthController],
   providers: [

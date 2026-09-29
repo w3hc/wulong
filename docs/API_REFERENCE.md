@@ -58,6 +58,7 @@ Get a TEE attestation that commits to the server's public keys, so clients can c
   publicKey?: string;        // Public key of the TEE (if applicable)
   mlkemPublicKey: string;    // ML-KEM-1024 public key (base64)
   identityPublicKey: string; // Uncompressed secp256k1 identity public key (hex)
+  tlsCertificate?: string;   // Leaf TLS certificate served from inside the enclave (base64 DER)
   reportData: string;        // The 64 bytes of report_data in the quote (hex)
   keyManifest: {             // EIP-712 manifest signed by the identity key
     manifest: { appId: string; mlkemPublicKeyHash: string; relayer: string; epoch: number };
@@ -67,7 +68,7 @@ Get a TEE attestation that commits to the server's public keys, so clients can c
 }
 ```
 
-`reportData` is `SHA-256(LP("wulong-report-v1") || LP(ek) || LP(relayer) || LP(identity_pubkey) || LP(SHA-256(tls_cert)))` followed by the nonce, or 32 zero bytes. The relayer and TLS certificate terms are empty for now. See [KEY_DERIVATION.md](KEY_DERIVATION.md#report_data).
+`reportData` is `SHA-256(LP("wulong-report-v1") || LP(ek) || LP(relayer) || LP(identity_pubkey) || LP(SHA-256(tls_cert)))` followed by the nonce, or 32 zero bytes. `tls_cert` is `tlsCertificate`; check it equals the certificate of your TLS session. The relayer term is empty for now, and the TLS term is empty (and `tlsCertificate` absent) only when TLS terminates outside the enclave. See [KEY_DERIVATION.md](KEY_DERIVATION.md#report_data).
 
 Returns 503 when the keys have not been derived (development without the dstack simulator).
 

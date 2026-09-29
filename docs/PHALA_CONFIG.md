@@ -49,8 +49,9 @@ The [Dockerfile](../Dockerfile) uses a multi-stage build:
 2. **Production stage**: Runs with production dependencies only, starts with `node dist/src/main.js`
 
 Key points:
-- Port 3000 is exposed for HTTP traffic (Phala handles TLS termination)
-- Production mode uses HTTP, not HTTPS (configured in [src/main.ts](../src/main.ts:15))
+- Port 3000 serves HTTPS, terminated inside the enclave with a key and certificate issued by the dstack KMS ([src/tls/tee-tls.service.ts](../src/tls/tee-tls.service.ts))
+- The gateway must run in TLS passthrough mode, see [Endpoint URL Format](#endpoint-url-format)
+- Startup fails if the certificate cannot be obtained, unless `ALLOW_TLS_OUTSIDE_ENCLAVE=true` is added to the compose file, which serves plain HTTP behind the gateway, logs an error every minute, and changes the attested compose hash
 - All secrets are loaded from environment variables injected by Phala
 
 ## Configuration Files
@@ -73,6 +74,7 @@ services:
     environment:
       - NODE_ENV=${NODE_ENV}
       - KMS_URL=${KMS_URL}
+      - TLS_ALT_NAMES=${TLS_ALT_NAMES}  # <APP_ID>-3000s.<CLUSTER>.phala.network
     restart: unless-stopped
 ```
 
@@ -217,13 +219,17 @@ phala runtime-config --interactive
 
 Your application is accessible at:
 ```
-https://<APP_ID>-<PORT>.<CLUSTER>.phala.network
+https://<APP_ID>-<PORT>s.<CLUSTER>.phala.network
 ```
 
 For example:
 ```
-https://0214f0d80bd3b81d61c79653590789ac38979c43-3000.dstack-pha-prod9.phala.network
+https://0214f0d80bd3b81d61c79653590789ac38979c43-3000s.dstack-pha-prod9.phala.network
 ```
+
+The trailing `s` after the port puts the gateway in TLS passthrough mode: it forwards the encrypted stream and TLS terminates inside the enclave. Without it (`-3000`), the gateway terminates TLS itself, outside the enclave, and then speaks plain HTTP to a server that expects TLS. Set `TLS_ALT_NAMES` to this hostname so the certificate is issued for it.
+
+The certificate is signed by the app's dstack KMS CA, not a public CA, so browsers and default HTTP clients reject it. Clients trust it by checking it against the attestation: `pnpm verify:attestation` does this.
 
 ### Finding Your Endpoint
 

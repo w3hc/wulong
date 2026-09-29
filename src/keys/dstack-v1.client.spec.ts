@@ -1,3 +1,4 @@
+import { X509Certificate } from 'crypto';
 import * as fs from 'fs';
 import * as http from 'http';
 import * as os from 'os';
@@ -5,6 +6,18 @@ import * as path from 'path';
 import { AddressInfo } from 'net';
 import { getAddress } from 'ethers';
 import { DstackV1Client } from './dstack-v1.client';
+
+const TEST_CERTIFICATE = `-----BEGIN CERTIFICATE-----
+MIIBhDCCASmgAwIBAgIUQKhCch4cCedvNFLRLYnLZI5uaiwwCgYIKoZIzj0EAwIw
+FjEUMBIGA1UEAwwLd3Vsb25nLXRlc3QwIBcNMjYwOTI5MTY0NjU2WhgPMjEyNjA5
+MDUxNjQ2NTZaMBYxFDASBgNVBAMMC3d1bG9uZy10ZXN0MFkwEwYHKoZIzj0CAQYI
+KoZIzj0DAQcDQgAE308vcOnO7c2IhpMSO/zRw5dyWJsnNpxwWWmMChFRCQqc15Gu
+gTV9Dy9Ygd8W/WVeFUlJcA4mkJs4jH+/kRogWKNTMFEwHQYDVR0OBBYEFC/8SlZH
+KEg2r+1JC6sorZK40o2cMB8GA1UdIwQYMBaAFC/8SlZHKEg2r+1JC6sorZK40o2c
+MA8GA1UdEwEB/wQFMAMBAf8wCgYIKoZIzj0EAwIDSQAwRgIhAISqc4fhk0re+9m2
+K+2VHo25+h0ACfPQWaoekB+xTvGrAiEAr8cEk4fd6A+CZiJIKRKBXKBa20jQi9PO
+XbHSk+gVyuo=
+-----END CERTIFICATE-----`;
 
 describe('DstackV1Client', () => {
   let server: http.Server;
@@ -121,6 +134,49 @@ describe('DstackV1Client', () => {
 
     await expect(new DstackV1Client().getKey('d', 'ed25519')).rejects.toThrow(
       'malformed key',
+    );
+  });
+
+  it('requests a RA-TLS server certificate and decodes the leaf', async () => {
+    const socket = path.join(tmpDir, 'dstack.sock');
+    await listen(socket);
+    process.env.DSTACK_SIMULATOR_ENDPOINT = socket;
+    reply.body = JSON.stringify({
+      key: 'KEY_PEM',
+      certificate_chain: [TEST_CERTIFICATE, TEST_CERTIFICATE],
+    });
+
+    const result = await new DstackV1Client().getTlsKey([
+      'app-3000s.example.com',
+    ]);
+
+    expect(requests).toEqual([
+      {
+        url: '/GetTlsKey',
+        body: {
+          subject: 'app-3000s.example.com',
+          alt_names: ['app-3000s.example.com'],
+          usage_ra_tls: true,
+          usage_server_auth: true,
+          usage_client_auth: false,
+        },
+      },
+    ]);
+    expect(result.key).toBe('KEY_PEM');
+    expect(result.certificateChain).toHaveLength(2);
+    expect(Buffer.from(result.leafCertificateDer)).toEqual(
+      new X509Certificate(TEST_CERTIFICATE).raw,
+    );
+  });
+
+  it('rejects a TLS key response without a certificate chain', async () => {
+    const socket = path.join(tmpDir, 'dstack.sock');
+    await listen(socket);
+    process.env.DSTACK_SIMULATOR_ENDPOINT = socket;
+    reply.body = JSON.stringify({ key: 'KEY_PEM', certificate_chain: [] });
+
+    await expect(new DstackV1Client().getTlsKey([])).rejects.toThrow(
+      'no key or certificate_chain',
     );
   });
 

@@ -1,3 +1,4 @@
+import { X509Certificate } from 'crypto';
 import * as http from 'http';
 import { Injectable } from '@nestjs/common';
 import { getAddress } from 'ethers';
@@ -10,6 +11,14 @@ export interface GetKeyResponse {
   key: Uint8Array;
   publicKey: Uint8Array;
   signatureChain: Uint8Array[];
+}
+
+export interface GetTlsKeyResponse {
+  /** PKCS#8 private key, PEM. */
+  key: string;
+  /** PEM certificates, leaf first. */
+  certificateChain: string[];
+  leafCertificateDer: Uint8Array;
 }
 
 /**
@@ -51,6 +60,34 @@ export class DstackV1Client {
     };
   }
 
+  /**
+   * A TLS server key and certificate issued by the KMS to this app, with the
+   * private key generated inside the CVM. The chain is leaf first.
+   */
+  async getTlsKey(altNames: string[]): Promise<GetTlsKeyResponse> {
+    const result = await this.call('/GetTlsKey', {
+      subject: altNames[0] ?? 'wulong',
+      alt_names: altNames,
+      usage_ra_tls: true,
+      usage_server_auth: true,
+      usage_client_auth: false,
+    });
+    const chain = result.certificate_chain;
+    if (
+      typeof result.key !== 'string' ||
+      !Array.isArray(chain) ||
+      chain.length === 0 ||
+      !chain.every((pem) => typeof pem === 'string')
+    ) {
+      throw new Error('dstack GetTlsKey returned no key or certificate_chain');
+    }
+    return {
+      key: result.key,
+      certificateChain: chain,
+      leafCertificateDer: new Uint8Array(new X509Certificate(chain[0]).raw),
+    };
+  }
+
   /** This CVM's app id, from the guest agent's Info. */
   async getAppId(): Promise<string> {
     const { app_id: appId } = await this.call('/Info', {});
@@ -63,7 +100,12 @@ export class DstackV1Client {
   private call(
     path: string,
     body: object,
-  ): Promise<Record<string, unknown> & { signature_chain?: unknown[] }> {
+  ): Promise<
+    Record<string, unknown> & {
+      signature_chain?: unknown[];
+      certificate_chain?: unknown[];
+    }
+  > {
     const payload = JSON.stringify(body);
     const target = this.endpoint.startsWith('http')
       ? new URL(path, this.endpoint)

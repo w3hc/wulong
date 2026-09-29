@@ -14,6 +14,7 @@ import { randomBytes } from 'crypto';
 import { TeePlatformService } from '../attestation/tee-platform.service';
 import { buildReportData } from '../attestation/report-data';
 import { KeyDerivationService } from '../keys/key-derivation.service';
+import { TeeTlsService } from '../tls/tee-tls.service';
 import { AttestationResponseDto } from './dto/attestation-response.dto';
 import {
   MlKemEncryptionService,
@@ -44,6 +45,7 @@ export class SecretService {
     private readonly teePlatformService: TeePlatformService,
     private readonly mlkemEncryptionService: MlKemEncryptionService,
     private readonly keys: KeyDerivationService,
+    private readonly tls: TeeTlsService,
   ) {
     this.secretPath =
       process.env.CHEST_PATH ?? path.join(process.cwd(), 'chest.json');
@@ -202,8 +204,9 @@ export class SecretService {
 
   /**
    * Generates a TEE attestation whose `report_data` commits to Wulong's public
-   * keys and to the client's nonce, so a client can check that the returned
-   * ML-KEM key is the one held by the attested code.
+   * keys, to the TLS certificate served from inside the enclave, and to the
+   * client's nonce, so a client can check that the returned ML-KEM key is the
+   * one held by the attested code and that its TLS session ends in it.
    * @param nonce Optional 32-byte client challenge for freshness
    * @returns Attestation report, the committed keys, the `report_data`, the
    * signed key manifest and the identity key's `GetKey` signature chain
@@ -217,8 +220,9 @@ export class SecretService {
       throw new ServiceUnavailableException('Encryption keys are unavailable');
     }
 
+    const tlsCertificateDer = this.tls.getLeafCertificateDer() ?? undefined;
     const reportData = buildReportData(
-      { mlkemPublicKey, identityPublicKey },
+      { mlkemPublicKey, identityPublicKey, tlsCertificateDer },
       nonce,
     );
     const attestation =
@@ -232,6 +236,9 @@ export class SecretService {
       publicKey: attestation.publicKey,
       mlkemPublicKey: Buffer.from(mlkemPublicKey).toString('base64'),
       identityPublicKey: `0x${Buffer.from(identityPublicKey).toString('hex')}`,
+      tlsCertificate: tlsCertificateDer
+        ? Buffer.from(tlsCertificateDer).toString('base64')
+        : undefined,
       reportData: `0x${reportData.toString('hex')}`,
       keyManifest,
       identitySignatureChain: this.keys

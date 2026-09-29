@@ -16,6 +16,8 @@ export interface KeyBindingEvidence {
   identityPublicKey: string;
   reportData: string;
   keyManifest: SignedKeyManifest;
+  /** Base64 DER of the TLS leaf certificate served from inside the enclave. */
+  tlsCertificate?: string;
 }
 
 /**
@@ -25,23 +27,44 @@ export interface KeyBindingEvidence {
  * @param evidence The attestation response
  * @param options.nonce The nonce the client sent, if any
  * @param options.quote The raw TDX quote, to check its report_data
+ * @param options.servedCertificate DER of the certificate the TLS session
+ * presented, to check TLS terminates inside the enclave
  * @returns The failed checks, empty when the binding holds
  */
 export function verifyKeyBinding(
   evidence: KeyBindingEvidence,
-  options: { nonce?: Buffer; quote?: Buffer } = {},
+  options: { nonce?: Buffer; quote?: Buffer; servedCertificate?: Buffer } = {},
 ): string[] {
   const failures: string[] = [];
   const ek = Buffer.from(evidence.mlkemPublicKey, 'base64');
   const identity = Buffer.from(strip0x(evidence.identityPublicKey), 'hex');
   const reportData = Buffer.from(strip0x(evidence.reportData), 'hex');
+  const tlsCertificate = evidence.tlsCertificate
+    ? Buffer.from(evidence.tlsCertificate, 'base64')
+    : undefined;
 
   const expected = buildReportData(
-    { mlkemPublicKey: ek, identityPublicKey: identity },
+    {
+      mlkemPublicKey: ek,
+      identityPublicKey: identity,
+      tlsCertificateDer: tlsCertificate,
+    },
     options.nonce,
   );
   if (!reportData.equals(expected)) {
     failures.push('reportData does not commit to the returned keys and nonce');
+  }
+
+  if (options.servedCertificate) {
+    if (!tlsCertificate) {
+      failures.push(
+        'The attestation binds no TLS certificate: TLS terminates outside the enclave',
+      );
+    } else if (!options.servedCertificate.equals(tlsCertificate)) {
+      failures.push(
+        'The TLS session certificate is not the one bound by the attestation',
+      );
+    }
   }
 
   if (options.quote) {

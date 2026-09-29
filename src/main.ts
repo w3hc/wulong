@@ -1,4 +1,5 @@
-import * as fs from 'fs';
+import * as http from 'http';
+import * as https from 'https';
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { NestExpressApplication } from '@nestjs/platform-express';
@@ -7,29 +8,14 @@ import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { SanitizedLogger } from './logging/sanitized-logger';
 import { TeeExceptionFilter } from './filters/tee-exception.filter';
+import { TeeTlsService } from './tls/tee-tls.service';
 
 async function bootstrap() {
   const isProd = process.env.NODE_ENV === 'production';
 
-  // HTTPS only in dev with self-signed certs
-  // Production uses HTTP behind Phala's TLS termination proxy
-  const httpsOptions = !isProd
-    ? {
-        key: fs.readFileSync('./secrets/tls.key'),
-        cert: fs.readFileSync('./secrets/tls.cert'),
-      }
-    : undefined;
-
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
-    httpsOptions,
     logger: isProd ? new SanitizedLogger() : undefined,
   });
-
-  // Rate limiting keys on the client IP, which Phala's proxy forwards
-  // in X-Forwarded-For; trust that single hop only
-  if (isProd) {
-    app.set('trust proxy', 1);
-  }
 
   // Security headers - protects against common web vulnerabilities
   app.use(helmet());
@@ -64,11 +50,36 @@ async function bootstrap() {
   // Graceful shutdown handling
   app.enableShutdownHooks();
 
+  // Runs onModuleInit, which is where TeeTlsService obtains the certificate
+  await app.init();
+
+  // TLS terminates in the enclave; its certificate is only known once the app
+  // is initialized, so the server is created here rather than by NestFactory
+  const tlsOptions = app.get(TeeTlsService).getServerOptions();
+  if (!tlsOptions && !isProd) {
+    throw new Error(
+      'No TLS certificate: create secrets/tls.key and secrets/tls.cert, see README.md',
+    );
+  }
+  if (!tlsOptions && process.env.ALLOW_TLS_OUTSIDE_ENCLAVE !== 'true') {
+    throw new Error('Refusing to serve plain HTTP without in-enclave TLS');
+  }
+
+  // Only a TLS-terminating proxy (the ALLOW_TLS_OUTSIDE_ENCLAVE opt-out) sets
+  // X-Forwarded-For; with passthrough, clients could forge it to dodge rate limits
+  if (!tlsOptions) {
+    app.set('trust proxy', 1);
+  }
+
   const port = 3000;
-  await app.listen(port);
+  const handler = app.getHttpAdapter().getInstance();
+  const server = tlsOptions
+    ? https.createServer(tlsOptions, handler)
+    : http.createServer(handler);
+  await new Promise<void>((resolve) => server.listen(port, resolve));
 
   // Log startup only in dev mode (production logger filters this out)
-  const protocol = isProd ? 'http' : 'https';
+  const protocol = tlsOptions ? 'https' : 'http';
   console.log(`Application is running on: ${protocol}://localhost:${port}`);
 }
 
