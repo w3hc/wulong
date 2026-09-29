@@ -4,9 +4,12 @@ import {
   NotFoundException,
   ForbiddenException,
   HttpStatus,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { SecretService } from './secret.service';
 import { TeePlatformService } from '../attestation/tee-platform.service';
+import { buildReportData } from '../attestation/report-data';
+import { KeyDerivationService } from '../keys/key-derivation.service';
 import { MlKemEncryptionService } from '../encryption/mlkem-encryption.service';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -45,6 +48,14 @@ describe('SecretService', () => {
     decryptMultiRecipient: jest.fn(),
   };
 
+  const mlkemPublicKey = new Uint8Array(1568).fill(0x01);
+  const identityPublicKey = new Uint8Array(65).fill(0x04);
+
+  const mockKeyDerivationService = {
+    getMlKemPublicKey: jest.fn(),
+    getIdentityPublicKey: jest.fn(),
+  };
+
   // Helper to create a valid encrypted payload
   const createMockEncryptedPayload = (publicKey?: string) => {
     // Create 1600 bytes of data (1568 KEM + 32 encrypted AES key)
@@ -78,6 +89,10 @@ describe('SecretService', () => {
         {
           provide: MlKemEncryptionService,
           useValue: mockMlKemEncryptionService,
+        },
+        {
+          provide: KeyDerivationService,
+          useValue: mockKeyDerivationService,
         },
       ],
     }).compile();
@@ -646,79 +661,62 @@ describe('SecretService', () => {
   });
 
   describe('getAttestation', () => {
-    it('should return attestation from TEE platform service', async () => {
-      const mockAttestation = {
-        platform: 'amd-sev-snp' as const,
-        report: 'base64-encoded-attestation-report',
-        measurement: 'abc123measurement',
-        timestamp: '2026-03-18T10:30:00.000Z',
-        publicKey: '0x1234567890abcdef',
-      };
+    const mockAttestation = {
+      platform: 'intel-tdx' as const,
+      report: 'tdx-quote-base64',
+      measurement: 'def456measurement',
+      timestamp: '2026-03-18T10:35:00.000Z',
+    };
 
+    beforeEach(() => {
+      mockKeyDerivationService.getMlKemPublicKey.mockReturnValue(
+        mlkemPublicKey,
+      );
+      mockKeyDerivationService.getIdentityPublicKey.mockReturnValue(
+        identityPublicKey,
+      );
       mockTeePlatformService.generateAttestationReport.mockResolvedValue(
         mockAttestation,
       );
+    });
+
+    it('quotes the report_data committing to the keys', async () => {
+      const expected = buildReportData({ mlkemPublicKey, identityPublicKey });
 
       const result = await service.getAttestation();
 
-      expect(result).toEqual(mockAttestation);
       expect(
         mockTeePlatformService.generateAttestationReport,
-      ).toHaveBeenCalledTimes(1);
+      ).toHaveBeenCalledWith(expected);
+      expect(result).toEqual({
+        ...mockAttestation,
+        publicKey: undefined,
+        mlkemPublicKey: Buffer.from(mlkemPublicKey).toString('base64'),
+        identityPublicKey: `0x${Buffer.from(identityPublicKey).toString('hex')}`,
+        reportData: `0x${expected.toString('hex')}`,
+      });
     });
 
-    it('should return Intel TDX attestation', async () => {
-      const mockAttestation = {
-        platform: 'intel-tdx' as const,
-        report: 'tdx-quote-base64',
-        measurement: 'def456measurement',
-        timestamp: '2026-03-18T10:35:00.000Z',
-      };
+    it('places the client nonce in report_data', async () => {
+      const nonce = Buffer.alloc(32, 0x7f);
 
-      mockTeePlatformService.generateAttestationReport.mockResolvedValue(
-        mockAttestation,
-      );
+      const result = await service.getAttestation(nonce);
 
-      const result = await service.getAttestation();
-
-      expect(result.platform).toBe('intel-tdx');
-      expect(result.report).toBe('tdx-quote-base64');
-      expect(result.measurement).toBe('def456measurement');
+      const [reportData] = mockTeePlatformService.generateAttestationReport.mock
+        .calls[0] as [Buffer];
+      expect(reportData.subarray(32).equals(nonce)).toBe(true);
+      expect(result.reportData.endsWith(nonce.toString('hex'))).toBe(true);
     });
 
-    it('should return AWS Nitro attestation', async () => {
-      const mockAttestation = {
-        platform: 'aws-nitro' as const,
-        report: 'nitro-attestation-cbor-base64',
-        measurement: 'PCR0_MEASUREMENT',
-        timestamp: '2026-03-18T10:40:00.000Z',
-      };
+    it('refuses to attest without derived keys', async () => {
+      mockKeyDerivationService.getMlKemPublicKey.mockReturnValue(null);
 
-      mockTeePlatformService.generateAttestationReport.mockResolvedValue(
-        mockAttestation,
+      await expect(service.getAttestation()).rejects.toThrow(
+        ServiceUnavailableException,
       );
-
-      const result = await service.getAttestation();
-
-      expect(result.platform).toBe('aws-nitro');
-    });
-
-    it('should return mock attestation in non-TEE environment', async () => {
-      const mockAttestation = {
-        platform: 'none' as const,
-        report: 'MOCK_ATTESTATION_FOR_DEVELOPMENT_ONLY',
-        measurement: 'MOCK_MEASUREMENT_NOT_SECURE',
-        timestamp: '2026-03-18T10:45:00.000Z',
-      };
-
-      mockTeePlatformService.generateAttestationReport.mockResolvedValue(
-        mockAttestation,
-      );
-
-      const result = await service.getAttestation();
-
-      expect(result.platform).toBe('none');
-      expect(result.measurement).toContain('MOCK');
+      expect(
+        mockTeePlatformService.generateAttestationReport,
+      ).not.toHaveBeenCalled();
     });
 
     it('should propagate errors from TEE platform service', async () => {

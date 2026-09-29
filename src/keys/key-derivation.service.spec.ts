@@ -1,5 +1,11 @@
 import { createHash, hkdfSync } from 'crypto';
-import { SigningKey, getBytes, verifyTypedData } from 'ethers';
+import {
+  SigningKey,
+  computeAddress,
+  getBytes,
+  hexlify,
+  verifyTypedData,
+} from 'ethers';
 import { createMlKem1024 } from 'mlkem';
 import {
   DstackV1Client,
@@ -141,6 +147,17 @@ describe('KeyDerivationService', () => {
 
       expect(hex(a.getMlKemPublicKey()!)).toBe(hex(b.getMlKemPublicKey()!));
       expect(a.getIdentityAddress()).toBe(b.getIdentityAddress());
+    });
+
+    it('exposes the uncompressed identity public key of its address', async () => {
+      const service = await create();
+      const publicKey = service.getIdentityPublicKey()!;
+
+      expect(publicKey).toHaveLength(65);
+      expect(publicKey[0]).toBe(0x04);
+      expect(computeAddress(hexlify(publicKey))).toBe(
+        service.getIdentityAddress(),
+      );
     });
 
     it('decapsulates what is encapsulated to its public key', async () => {

@@ -5,6 +5,7 @@ import {
   TypedDataEncoder,
   ZeroAddress,
   computeAddress,
+  getBytes,
   hexlify,
   sha256,
 } from 'ethers';
@@ -126,6 +127,11 @@ export class KeyDerivationService implements OnModuleInit {
 
   getIdentityAddress(): string | null {
     return this.identity ? computeAddress(this.identity.publicKey) : null;
+  }
+
+  /** Uncompressed secp256k1 identity public key, 65 bytes. */
+  getIdentityPublicKey(): Uint8Array | null {
+    return this.identity ? getBytes(this.identity.publicKey) : null;
   }
 
   getIdentitySignatureChain(): Uint8Array[] {

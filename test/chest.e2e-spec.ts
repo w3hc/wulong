@@ -8,6 +8,8 @@ import { SiweMessage } from 'siwe';
 import * as fs from 'fs';
 import * as path from 'path';
 import { MlKemEncryptionService } from '../src/encryption/mlkem-encryption.service';
+import { KeyDerivationService } from '../src/keys/key-derivation.service';
+import { buildReportData } from '../src/attestation/report-data';
 
 // Helper to create a valid encrypted payload for testing
 const createMockEncryptedPayload = () => {
@@ -93,6 +95,11 @@ describe('Chest Endpoints (e2e)', () => {
         decryptMultiRecipient: jest
           .fn()
           .mockResolvedValue('decrypted-test-secret'),
+      })
+      .overrideProvider(KeyDerivationService)
+      .useValue({
+        getMlKemPublicKey: () => new Uint8Array(1568).fill(0x01),
+        getIdentityPublicKey: () => new Uint8Array(65).fill(0x04),
       })
       .compile();
 
@@ -688,6 +695,30 @@ describe('Chest Endpoints (e2e)', () => {
           // Verify it's a valid ISO timestamp
           expect(new Date(timestamp).toISOString()).toBe(timestamp);
         });
+    });
+
+    it('should commit report_data to the keys and the nonce', () => {
+      const nonce = 'cd'.repeat(32);
+      return request(app.getHttpServer())
+        .get(`/chest/attestation?nonce=${nonce}`)
+        .expect(200)
+        .expect((res) => {
+          const body = res.body as { reportData: string };
+          const expected = buildReportData(
+            {
+              mlkemPublicKey: new Uint8Array(1568).fill(0x01),
+              identityPublicKey: new Uint8Array(65).fill(0x04),
+            },
+            Buffer.from(nonce, 'hex'),
+          );
+          expect(body.reportData).toBe(`0x${expected.toString('hex')}`);
+        });
+    });
+
+    it('should reject an invalid nonce', () => {
+      return request(app.getHttpServer())
+        .get('/chest/attestation?nonce=abcd')
+        .expect(400);
     });
 
     it('should return base64-encoded report', () => {

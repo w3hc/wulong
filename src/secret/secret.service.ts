@@ -5,12 +5,15 @@ import {
   BadRequestException,
   HttpException,
   HttpStatus,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { isAddress } from 'ethers';
 import * as fs from 'fs';
 import * as path from 'path';
 import { randomBytes } from 'crypto';
 import { TeePlatformService } from '../attestation/tee-platform.service';
+import { buildReportData } from '../attestation/report-data';
+import { KeyDerivationService } from '../keys/key-derivation.service';
 import { AttestationResponseDto } from './dto/attestation-response.dto';
 import {
   MlKemEncryptionService,
@@ -40,6 +43,7 @@ export class SecretService {
   constructor(
     private readonly teePlatformService: TeePlatformService,
     private readonly mlkemEncryptionService: MlKemEncryptionService,
+    private readonly keys: KeyDerivationService,
   ) {
     this.secretPath =
       process.env.CHEST_PATH ?? path.join(process.cwd(), 'chest.json');
@@ -197,17 +201,26 @@ export class SecretService {
   }
 
   /**
-   * Generates a TEE attestation report proving the code running and platform integrity.
-   * Users can verify the measurement matches the published source code to ensure
-   * the service cannot access their secrets.
-   * @returns Attestation report with platform, measurement, and cryptographic proof
+   * Generates a TEE attestation whose `report_data` commits to Wulong's public
+   * keys and to the client's nonce, so a client can check that the returned
+   * ML-KEM key is the one held by the attested code.
+   * @param nonce Optional 32-byte client challenge for freshness
+   * @returns Attestation report, the committed keys and the `report_data`
+   * @throws ServiceUnavailableException if the keys have not been derived
    */
-  async getAttestation(): Promise<AttestationResponseDto> {
-    const attestation =
-      await this.teePlatformService.generateAttestationReport();
+  async getAttestation(nonce?: Buffer): Promise<AttestationResponseDto> {
+    const mlkemPublicKey = this.keys.getMlKemPublicKey();
+    const identityPublicKey = this.keys.getIdentityPublicKey();
+    if (!mlkemPublicKey || !identityPublicKey) {
+      throw new ServiceUnavailableException('Encryption keys are unavailable');
+    }
 
-    // Include ML-KEM public key for quantum-resistant encryption
-    const mlkemPublicKey = this.mlkemEncryptionService.getPublicKey();
+    const reportData = buildReportData(
+      { mlkemPublicKey, identityPublicKey },
+      nonce,
+    );
+    const attestation =
+      await this.teePlatformService.generateAttestationReport(reportData);
 
     return {
       platform: attestation.platform,
@@ -215,7 +228,9 @@ export class SecretService {
       measurement: attestation.measurement,
       timestamp: attestation.timestamp,
       publicKey: attestation.publicKey,
-      mlkemPublicKey: mlkemPublicKey || undefined,
+      mlkemPublicKey: Buffer.from(mlkemPublicKey).toString('base64'),
+      identityPublicKey: `0x${Buffer.from(identityPublicKey).toString('hex')}`,
+      reportData: `0x${reportData.toString('hex')}`,
     };
   }
 
