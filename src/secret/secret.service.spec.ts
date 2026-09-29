@@ -314,6 +314,27 @@ describe('SecretService', () => {
       expect(fs.promises.rename).not.toHaveBeenCalled();
     });
 
+    it('should write to CHEST_PATH when set', async () => {
+      process.env.CHEST_PATH = '/data/chest.json';
+      const configuredService = new SecretService(
+        mockTeePlatformService as unknown as TeePlatformService,
+        mockMlKemEncryptionService as unknown as MlKemEncryptionService,
+      );
+      delete process.env.CHEST_PATH;
+
+      const address = '0xbfbaa5a59e3b6c06aff9c975092b8705f804fa1c';
+      await configuredService.store(
+        createMockEncryptedPayload(),
+        [address],
+        address,
+      );
+
+      expect(fs.promises.rename).toHaveBeenCalledWith(
+        '/data/chest.json.tmp',
+        '/data/chest.json',
+      );
+    });
+
     it('should throw error if file write fails', async () => {
       jest
         .spyOn(fs.promises, 'writeFile')

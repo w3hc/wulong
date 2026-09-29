@@ -34,6 +34,9 @@ RUN pnpm install --prod --frozen-lockfile
 # Copy built application from builder
 COPY --from=builder /app/dist ./dist
 
+# Persistent chest storage (mounted as a volume in docker-compose.yml)
+RUN mkdir -p /app/data
+
 # Expose port
 EXPOSE 3000
 

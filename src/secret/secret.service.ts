@@ -41,7 +41,8 @@ export class SecretService {
     private readonly teePlatformService: TeePlatformService,
     private readonly mlkemEncryptionService: MlKemEncryptionService,
   ) {
-    this.secretPath = path.join(process.cwd(), 'chest.json');
+    this.secretPath =
+      process.env.CHEST_PATH ?? path.join(process.cwd(), 'chest.json');
     this.maxBytes = Number(
       process.env.CHEST_MAX_BYTES ?? DEFAULT_CHEST_MAX_BYTES,
     );
