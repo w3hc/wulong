@@ -9,6 +9,11 @@ import { AppModule } from './app.module';
 import { SanitizedLogger } from './logging/sanitized-logger';
 import { TeeExceptionFilter } from './filters/tee-exception.filter';
 import { TeeTlsService } from './tls/tee-tls.service';
+import {
+  configureCors,
+  configureTrustProxy,
+  parseCorsOrigins,
+} from './http/http-config';
 
 async function bootstrap() {
   const isProd = process.env.NODE_ENV === 'production';
@@ -20,11 +25,7 @@ async function bootstrap() {
   // Security headers - protects against common web vulnerabilities
   app.use(helmet());
 
-  // CORS configuration - restrict to trusted origins in production
-  app.enableCors({
-    origin: isProd ? false : '*', // Disable CORS in production by default
-    credentials: true,
-  });
+  configureCors(app, parseCorsOrigins(process.env.CORS_ORIGINS));
 
   // Global validation pipe - validates all incoming requests
   app.useGlobalPipes(
@@ -65,11 +66,7 @@ async function bootstrap() {
     throw new Error('Refusing to serve plain HTTP without in-enclave TLS');
   }
 
-  // Only a TLS-terminating proxy (the ALLOW_TLS_OUTSIDE_ENCLAVE opt-out) sets
-  // X-Forwarded-For; with passthrough, clients could forge it to dodge rate limits
-  if (!tlsOptions) {
-    app.set('trust proxy', 1);
-  }
+  configureTrustProxy(app, tlsOptions !== null);
 
   const port = 3000;
   const handler = app.getHttpAdapter().getInstance();

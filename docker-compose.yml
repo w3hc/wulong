@@ -14,6 +14,7 @@ services:
       - NODE_ENV=${NODE_ENV}
       - KMS_URL=${KMS_URL}
       - CHEST_PATH=/app/data/chest.json
+      - CORS_ORIGINS=${CORS_ORIGINS}
       # Gateway hostnames the in-enclave TLS certificate is issued for, e.g.
       # <app-id>-3000s.<gateway-domain>. The trailing "s" puts the gateway in TLS
       # passthrough mode, so TLS terminates in this container.

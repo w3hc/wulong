@@ -6,7 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- `CORS_ORIGINS`: comma-separated origins of the browser UIs allowed to call the API. Unset allows none; startup fails on an entry that is not an exact origin ([#41](https://github.com/w3hc/wulong/issues/41)).
+
 ### Fixed
+
+- CORS combined `origin: '*'` with `credentials: true` in development, which browsers reject, and was disabled in production. Auth uses SIWE headers, not cookies, so credentials mode is gone and origins come from `CORS_ORIGINS` ([#41](https://github.com/w3hc/wulong/issues/41)).
+- `GET /chest/access/:slot` returned plaintext without cache headers. It now sends `Cache-Control: no-store` and `Pragma: no-cache` ([#41](https://github.com/w3hc/wulong/issues/41)).
+- `X-Forwarded-For` handling is tested: ignored when TLS terminates in the enclave, and only the proxy's own hop trusted under `ALLOW_TLS_OUTSIDE_ENCLAVE` ([#41](https://github.com/w3hc/wulong/issues/41)).
 
 - `docker-compose.yml` ran `julienberanger/wulong:latest`, a mutable tag. It now pins the v0.2.0 image, `ghcr.io/w3hc/wulong@sha256:fdbd5ffa…`, so the attested compose hash commits to the image ([#40](https://github.com/w3hc/wulong/issues/40)).
 - A tag pushed twice ran two releases concurrently and added the image digest to the release notes twice. The docs link in those notes was relative and did not resolve.

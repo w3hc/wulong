@@ -31,6 +31,9 @@ Edit `.env` and configure:
 NODE_ENV=development
 KMS_URL=https://your-kms.example.com/release
 
+# Origins of the browser UIs allowed to call the API
+CORS_ORIGINS=http://localhost:5173
+
 # dstack simulator, from which the ML-KEM keys are derived
 DSTACK_SIMULATOR_ENDPOINT=http://localhost:8090
 
@@ -218,7 +221,7 @@ The application behaves differently based on `NODE_ENV`:
 
 - Uses HTTPS with self-signed certificates
 - Detailed logging with stack traces
-- CORS enabled for all origins (`*`)
+- CORS allows only the origins in `CORS_ORIGINS` (none if unset)
 - Hot reload enabled with `pnpm start:dev`
 - Swagger UI accessible
 
@@ -226,7 +229,7 @@ The application behaves differently based on `NODE_ENV`:
 
 - Uses HTTP (expects TLS termination proxy)
 - Sanitized logging (no sensitive data)
-- CORS disabled by default
+- CORS allows only the origins in `CORS_ORIGINS` (none if unset)
 - Optimized build with only production dependencies
 - Swagger UI still accessible (consider disabling in production)
 

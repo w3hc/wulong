@@ -94,6 +94,12 @@ Every route is rate-limited per client IP, and each route has its own counter:
 
 Past a limit, the API answers `429 Too Many Requests`. Once 10,000 nonces are pending, `POST /auth/nonce` is rejected until some are used or expire (5 minutes); live nonces are never evicted. With TLS terminating in the enclave, the gateway forwards encrypted bytes and cannot add `X-Forwarded-For`, so the client IP is the gateway's and every client shares one counter. `X-Forwarded-For` is trusted only under the `ALLOW_TLS_OUTSIDE_ENCLAVE` opt-out.
 
+## Browser Clients
+
+Authentication travels in the `X-SIWE-Message` and `X-SIWE-Signature` headers, never in cookies, so CORS runs without credentials. Browsers may call the API only from the origins listed in `CORS_ORIGINS`, comma-separated as `scheme://host[:port]`, e.g. `https://app.example.com,http://localhost:5173`. Unset, no origin is allowed. Non-browser clients (scripts, servers, mobile apps) are unaffected by CORS.
+
+`GET /chest/access/:slot` returns plaintext and sends `Cache-Control: no-store` and `Pragma: no-cache`.
+
 ## Storage
 
 Secrets are stored, encrypted, in a single JSON file. Writes are serialized within the process and saved atomically (temp file, then rename).
