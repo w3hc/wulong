@@ -203,7 +203,9 @@ describe('SecretService', () => {
       const encryptedPayload = createMockEncryptedPayload();
       await expect(
         service.store(encryptedPayload, ['invalid-address'], 'invalid-address'),
-      ).rejects.toThrow(BadRequestException);
+      ).rejects.toThrow(
+        new BadRequestException('Invalid Ethereum address in publicAddresses'),
+      );
 
       await expect(
         service.store(encryptedPayload, ['0x123'], '0x123'),
@@ -412,7 +414,7 @@ describe('SecretService', () => {
           ['0xbfbaa5a59e3b6c06aff9c975092b8705f804fa1c'],
           '0xbfbaa5a59e3b6c06aff9c975092b8705f804fa1c',
         ),
-      ).rejects.toThrow(/Invalid ML-KEM ciphertext size/);
+      ).rejects.toThrow('Invalid ML-KEM ciphertext size: expected 1600 bytes');
     });
 
     it('should throw ForbiddenException if caller is not among publicAddresses', async () => {
@@ -511,15 +513,21 @@ describe('SecretService', () => {
 
       await expect(
         service.access(nonExistentSlot, testAddress),
-      ).rejects.toThrow(NotFoundException);
+      ).rejects.toThrow(new NotFoundException('Slot not found'));
     });
 
-    it('should throw ForbiddenException if caller is not an owner', async () => {
+    it('should throw the same NotFoundException if caller is not an owner', async () => {
       const unauthorizedAddress = '0x70997970C51812dc3A010C7d01b50e0d17dc79C8';
 
       await expect(
         service.access(testSlot, unauthorizedAddress),
-      ).rejects.toThrow(ForbiddenException);
+      ).rejects.toThrow(new NotFoundException('Slot not found'));
+    });
+
+    it('should throw NotFoundException for a slot named after an Object property', async () => {
+      await expect(service.access('__proto__', testAddress)).rejects.toThrow(
+        new NotFoundException('Slot not found'),
+      );
     });
 
     it('should allow access if caller is one of multiple owners', async () => {
@@ -575,12 +583,12 @@ describe('SecretService', () => {
     it('should throw BadRequestException if decryption fails', async () => {
       mockMlKemEncryptionService.decryptMultiRecipient.mockImplementation(
         () => {
-          throw new Error('Decryption failed');
+          throw new Error('Unsupported state or unable to authenticate data');
         },
       );
 
       await expect(service.access(testSlot, testAddress)).rejects.toThrow(
-        /Failed to decrypt secret/,
+        new BadRequestException('Failed to decrypt secret'),
       );
     });
 

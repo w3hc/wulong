@@ -96,9 +96,7 @@ export class MlKemEncryptionService {
       );
 
       if (!recipientEntry) {
-        throw new Error(
-          `Server public key not found in recipients list (expected: ${serverPublicKeyBase64.substring(0, 32)}...)`,
-        );
+        throw new Error('Server public key not found in recipients list');
       }
 
       // Decode combined ciphertext (ML-KEM ciphertext + encrypted AES key)
@@ -142,13 +140,7 @@ export class MlKemEncryptionService {
 
       return decrypted.toString('utf-8');
     } catch (error) {
-      if (process.env.NODE_ENV !== 'test') {
-        this.logger.error('Multi-recipient decryption failed:', error);
-      }
-      // In test mode, preserve original error message for better debugging
-      if (process.env.NODE_ENV === 'test') {
-        throw error;
-      }
+      this.logger.error('Multi-recipient decryption failed:', error);
       throw new Error('Failed to decrypt multi-recipient data', {
         cause: error,
       });
@@ -193,13 +185,7 @@ export class MlKemEncryptionService {
 
       return decrypted.toString('utf-8');
     } catch (error) {
-      if (process.env.NODE_ENV !== 'test') {
-        this.logger.error('Decryption failed:', error);
-      }
-      // In test mode, preserve original error message for better debugging
-      if (process.env.NODE_ENV === 'test') {
-        throw error;
-      }
+      this.logger.error('Decryption failed:', error);
       throw new Error('Failed to decrypt data', { cause: error });
     }
   }

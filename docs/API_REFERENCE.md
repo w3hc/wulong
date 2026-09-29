@@ -159,7 +159,7 @@ x-siwe-signature: <hex signature>
 
 **Status Codes:**
 - `201 Created` - Secret stored successfully
-- `400 Bad Request` - Invalid request (empty secret, invalid addresses, etc.)
+- `400 Bad Request` - Invalid request (empty secret, invalid addresses, etc.). The message states the rule broken, never the offending value
 - `401 Unauthorized` - Missing or invalid SIWE authentication
 - `403 Forbidden` - Caller is not one of `publicAddresses`
 
@@ -239,9 +239,9 @@ x-siwe-signature: <hex signature>
 
 **Status Codes:**
 - `200 OK` - Secret retrieved successfully
+- `400 Bad Request` - `Failed to decrypt secret`, whatever the cause; details go to the server log only
 - `401 Unauthorized` - Missing or invalid SIWE authentication
-- `403 Forbidden` - Caller is not an owner of this secret
-- `404 Not Found` - Slot does not exist
+- `404 Not Found` - `Slot not found`: the slot does not exist, or the caller is not one of its owners. Both answer the same, so a caller cannot probe which slots exist
 
 **Example:**
 
@@ -503,6 +503,11 @@ All endpoints return consistent error responses:
 - `403 Forbidden` - Authenticated but not authorized
 - `404 Not Found` - Resource does not exist
 - `500 Internal Server Error` - Unexpected server error
+
+Every response, success or error, also:
+
+- takes at least 100 ms plus 0–20 ms of random jitter, so a missing slot and a found one cannot be told apart by timing. Rejections by the SIWE guard or the rate limiter are not delayed: they run before the timing floor
+- carries `Cache-Control: no-store`, `Pragma: no-cache` and `Expires: 0`, and no `ETag`, `Vary`, `Server`, `X-Powered-By` or tracing headers
 
 **Example Error:**
 

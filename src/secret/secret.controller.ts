@@ -123,12 +123,9 @@ export class SecretController {
     description: 'Unauthorized - missing or invalid SIWE authentication',
   })
   @ApiResponse({
-    status: 403,
-    description: 'Forbidden - caller is not an owner of this secret',
-  })
-  @ApiResponse({
     status: 404,
-    description: 'Not found - slot does not exist',
+    description:
+      'Not found - slot does not exist or caller is not one of its owners',
   })
   async access(
     @Param('slot') slot: string,

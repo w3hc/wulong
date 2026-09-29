@@ -361,7 +361,7 @@ describe('Chest Endpoints (e2e)', () => {
         });
     });
 
-    it('should return 403 when caller is not an owner', async () => {
+    it('should answer a non-owner like a non-existent slot', async () => {
       // Generate nonce for wallet2
       const nonceResponse = await request(app.getHttpServer())
         .post('/auth/nonce')
@@ -386,7 +386,11 @@ describe('Chest Endpoints (e2e)', () => {
         .get(`/chest/access/${slot}`)
         .set('x-siwe-message', Buffer.from(message).toString('base64'))
         .set('x-siwe-signature', signature)
-        .expect(403);
+        .expect(404, {
+          statusCode: 404,
+          error: 'Not Found',
+          message: 'Slot not found',
+        });
     });
 
     it('should return 404 for non-existent slot', async () => {
@@ -409,7 +413,12 @@ describe('Chest Endpoints (e2e)', () => {
         .get(`/chest/access/${nonExistentSlot}`)
         .set('x-siwe-message', Buffer.from(message).toString('base64'))
         .set('x-siwe-signature', signature)
-        .expect(404);
+        .expect('Cache-Control', 'no-store')
+        .expect(404, {
+          statusCode: 404,
+          error: 'Not Found',
+          message: 'Slot not found',
+        });
     });
 
     it('should allow multiple owners to access the same secret', async () => {
@@ -659,7 +668,7 @@ describe('Chest Endpoints (e2e)', () => {
         .get(`/chest/access/${slot2}`)
         .set('x-siwe-message', Buffer.from(message3).toString('base64'))
         .set('x-siwe-signature', signature3)
-        .expect(403);
+        .expect(404);
     });
   });
 

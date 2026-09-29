@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import {
   MlKemEncryptionService,
@@ -32,7 +33,18 @@ describe('MlKemEncryptionService', () => {
     return created;
   };
 
+  // Returns the error thrown by fn, so both its message and cause can be checked
+  const thrownBy = (fn: () => unknown): Error => {
+    try {
+      fn();
+    } catch (error) {
+      return error as Error;
+    }
+    throw new Error('expected fn to throw');
+  };
+
   beforeAll(async () => {
+    jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
     mlkem = await createMlKem1024();
     [serverPublicKey, serverPrivateKey] = mlkem.generateKeyPair();
   });
@@ -123,8 +135,10 @@ describe('MlKemEncryptionService', () => {
         Buffer.from(clientPublicKey).toString('base64'),
       ]);
 
-      expect(() => service.decryptMultiRecipient(encrypted)).toThrow(
-        /Server public key not found in recipients list/,
+      const error = thrownBy(() => service.decryptMultiRecipient(encrypted));
+      expect(error.message).toBe('Failed to decrypt multi-recipient data');
+      expect((error.cause as Error).message).toBe(
+        'Server public key not found in recipients list',
       );
     });
 
@@ -138,7 +152,9 @@ describe('MlKemEncryptionService', () => {
       encrypted.recipients[0].ciphertext =
         Buffer.from('invalid').toString('base64');
 
-      expect(() => service.decryptMultiRecipient(encrypted)).toThrow(
+      const error = thrownBy(() => service.decryptMultiRecipient(encrypted));
+      expect(error.message).toBe('Failed to decrypt multi-recipient data');
+      expect((error.cause as Error).message).toMatch(
         /Invalid combined ciphertext size/,
       );
     });
@@ -152,7 +168,9 @@ describe('MlKemEncryptionService', () => {
       // Corrupt auth tag
       encrypted.authTag = Buffer.from('corrupted_tag_12').toString('base64');
 
-      expect(() => service.decryptMultiRecipient(encrypted)).toThrow();
+      expect(() => service.decryptMultiRecipient(encrypted)).toThrow(
+        'Failed to decrypt multi-recipient data',
+      );
     });
 
     it('should handle empty plaintext', async () => {
@@ -209,7 +227,9 @@ describe('MlKemEncryptionService', () => {
       const encrypted = service.encrypt('test');
       encrypted.ciphertext = Buffer.from('invalid').toString('base64');
 
-      expect(() => service.decrypt(encrypted)).toThrow(
+      const error = thrownBy(() => service.decrypt(encrypted));
+      expect(error.message).toBe('Failed to decrypt data');
+      expect((error.cause as Error).message).toMatch(
         /Invalid ML-KEM ciphertext size/,
       );
     });
@@ -218,7 +238,9 @@ describe('MlKemEncryptionService', () => {
       const encrypted = service.encrypt('test');
       encrypted.authTag = Buffer.from('corrupted_tag').toString('base64');
 
-      expect(() => service.decrypt(encrypted)).toThrow();
+      expect(() => service.decrypt(encrypted)).toThrow(
+        'Failed to decrypt data',
+      );
     });
 
     it('should throw error when decrypt called without initialization', async () => {
