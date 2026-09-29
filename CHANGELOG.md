@@ -13,12 +13,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- `POST /chest/store` required no authentication, so anyone could write to `chest.json` for any address. It now requires SIWE, and the caller must be one of `publicAddresses` (403 otherwise).
 - Rate limiting now applies to every route: `ThrottlerGuard` was configured but never registered.
 - Pending SIWE nonces are capped at 10,000; past the cap, `POST /auth/nonce` returns 429 instead of growing memory without bound.
 - In production, the client IP is read from `X-Forwarded-For` (one proxy hop trusted), so clients behind Phala's proxy are not throttled together.
 
 ### Changed
 
+- **Breaking:** `POST /chest/store` requires the `x-siwe-message` and `x-siwe-signature` headers. Nonces are single-use, so storing and then accessing takes two sign-ins.
 - **Breaking:** `POST /auth/nonce` takes a JSON body `{ "address": "0x…" }`, and the nonce is only accepted in a message signed by that address.
 
 - Bump NestJS to 12, including `@nestjs/config` 12 and `@nestjs/swagger` 12.

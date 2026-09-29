@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { GUARDS_METADATA } from '@nestjs/common/constants';
 import {
   BadRequestException,
   NotFoundException,
@@ -50,6 +51,10 @@ describe('SecretController', () => {
   });
 
   describe('store', () => {
+    const req = {
+      user: { address: '0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb' },
+    };
+
     it('should store a secret and return a slot', async () => {
       const dto: StoreRequestDto = {
         secret: 'my-secret',
@@ -59,12 +64,13 @@ describe('SecretController', () => {
 
       mockSecretService.store.mockResolvedValue(expectedSlot);
 
-      const result = await controller.store(dto);
+      const result = await controller.store(dto, req);
 
       expect(result).toEqual({ slot: expectedSlot });
       expect(mockSecretService.store).toHaveBeenCalledWith(
         dto.secret,
         dto.publicAddresses,
+        req.user.address,
       );
       expect(mockSecretService.store).toHaveBeenCalledTimes(1);
     });
@@ -81,12 +87,13 @@ describe('SecretController', () => {
 
       mockSecretService.store.mockResolvedValue(expectedSlot);
 
-      const result = await controller.store(dto);
+      const result = await controller.store(dto, req);
 
       expect(result).toEqual({ slot: expectedSlot });
       expect(mockSecretService.store).toHaveBeenCalledWith(
         dto.secret,
         dto.publicAddresses,
+        req.user.address,
       );
     });
 
@@ -100,7 +107,9 @@ describe('SecretController', () => {
         new BadRequestException('Secret cannot be empty'),
       );
 
-      await expect(controller.store(dto)).rejects.toThrow(BadRequestException);
+      await expect(controller.store(dto, req)).rejects.toThrow(
+        BadRequestException,
+      );
     });
 
     it('should propagate validation errors for invalid addresses', async () => {
@@ -113,7 +122,26 @@ describe('SecretController', () => {
         new BadRequestException('Invalid Ethereum address: invalid-address'),
       );
 
-      await expect(controller.store(dto)).rejects.toThrow(BadRequestException);
+      await expect(controller.store(dto, req)).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('should propagate ForbiddenException if caller is not among publicAddresses', async () => {
+      const dto: StoreRequestDto = {
+        secret: 'my-secret',
+        publicAddresses: ['0x70997970C51812dc3A010C7d01b50e0d17dc79C8'],
+      };
+
+      mockSecretService.store.mockRejectedValue(
+        new ForbiddenException(
+          'Store denied: caller must be one of publicAddresses',
+        ),
+      );
+
+      await expect(controller.store(dto, req)).rejects.toThrow(
+        ForbiddenException,
+      );
     });
   });
 
@@ -209,6 +237,18 @@ describe('SecretController', () => {
       expect(secretService).toBeDefined();
     });
 
+    it('should guard store and access with SiweGuard', () => {
+      for (const name of ['store', 'access']) {
+        const handler = Object.getOwnPropertyDescriptor(
+          SecretController.prototype,
+          name,
+        )?.value as object;
+        const guards = Reflect.getMetadata(GUARDS_METADATA, handler) as
+          unknown[] | undefined;
+        expect(guards).toContain(SiweGuard);
+      }
+    });
+
     it('should have SiweGuard configured in module', () => {
       // SiweGuard is applied via @UseGuards decorator
       // This is validated at runtime, not via reflection
@@ -236,10 +276,11 @@ describe('SecretController', () => {
         publicAddresses: ['0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb'],
       };
       const expectedSlot = 'c'.repeat(64);
+      const req = { user: { address: dto.publicAddresses[0] } };
 
       mockSecretService.store.mockResolvedValue(expectedSlot);
 
-      const result = await controller.store(dto);
+      const result = await controller.store(dto, req);
 
       expect(result).toEqual({ slot: expectedSlot });
     });

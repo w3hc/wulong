@@ -38,6 +38,36 @@ describe('Chest Endpoints (e2e)', () => {
   let wallet2: Wallet;
   const chestPath = path.join(process.cwd(), 'chest.json');
 
+  const siweHeaders = async (signer: Wallet) => {
+    const nonceResponse = await request(app.getHttpServer())
+      .post('/auth/nonce')
+      .send({ address: signer.address });
+    const nonce = (nonceResponse.body as { nonce: string }).nonce;
+
+    const message = new SiweMessage({
+      domain: 'localhost',
+      address: signer.address,
+      uri: 'http://localhost:3000',
+      version: '1',
+      chainId: 1,
+      nonce,
+      issuedAt: new Date().toISOString(),
+    }).prepareMessage();
+
+    return {
+      'x-siwe-message': Buffer.from(message).toString('base64'),
+      'x-siwe-signature': await signer.signMessage(message),
+    };
+  };
+
+  const storeAs = async (signer: Wallet, body: object) => {
+    const headers = await siweHeaders(signer);
+    return request(app.getHttpServer())
+      .post('/chest/store')
+      .set(headers)
+      .send(body);
+  };
+
   beforeAll(async () => {
     // Set test environment variables
     process.env.NODE_ENV = 'test';
@@ -92,103 +122,140 @@ describe('Chest Endpoints (e2e)', () => {
   });
 
   describe('POST /chest/store', () => {
-    it('should store a secret and return a slot', () => {
-      return request(app.getHttpServer())
-        .post('/chest/store')
-        .send({
-          secret: createMockEncryptedPayload(),
-          publicAddresses: [wallet.address],
-        })
-        .expect(201)
-        .expect((res) => {
-          expect(res.body).toHaveProperty('slot');
-          expect(typeof (res.body as { slot: string }).slot).toBe('string');
-          expect((res.body as { slot: string }).slot).toMatch(/^[0-9a-f]{64}$/);
-        });
+    it('should store a secret and return a slot', async () => {
+      const res = await storeAs(wallet, {
+        secret: createMockEncryptedPayload(),
+        publicAddresses: [wallet.address],
+      });
+
+      expect(res.status).toBe(201);
+      expect(res.body).toHaveProperty('slot');
+      expect(typeof (res.body as { slot: string }).slot).toBe('string');
+      expect((res.body as { slot: string }).slot).toMatch(/^[0-9a-f]{64}$/);
     });
 
-    it('should store a secret with multiple owners', () => {
-      return request(app.getHttpServer())
-        .post('/chest/store')
-        .send({
-          secret: createMockEncryptedPayload(),
-          publicAddresses: [wallet.address, wallet2.address],
-        })
-        .expect(201)
-        .expect((res) => {
-          expect(res.body).toHaveProperty('slot');
-        });
+    it('should store a secret with multiple owners', async () => {
+      const res = await storeAs(wallet, {
+        secret: createMockEncryptedPayload(),
+        publicAddresses: [wallet.address, wallet2.address],
+      });
+
+      expect(res.status).toBe(201);
+      expect(res.body).toHaveProperty('slot');
     });
 
-    it('should reject invalid encrypted payload', () => {
-      return request(app.getHttpServer())
-        .post('/chest/store')
-        .send({
-          secret: { recipients: [] },
-          publicAddresses: [wallet.address],
-        })
-        .expect(400);
-    });
-
-    it('should reject empty publicAddresses array', () => {
-      return request(app.getHttpServer())
-        .post('/chest/store')
-        .send({
-          secret: createMockEncryptedPayload(),
-          publicAddresses: [],
-        })
-        .expect(400);
-    });
-
-    it('should reject invalid Ethereum address', () => {
-      return request(app.getHttpServer())
-        .post('/chest/store')
-        .send({
-          secret: createMockEncryptedPayload(),
-          publicAddresses: ['invalid-address'],
-        })
-        .expect(400);
-    });
-
-    it('should reject malformed request (missing secret)', () => {
-      return request(app.getHttpServer())
-        .post('/chest/store')
-        .send({
-          publicAddresses: [wallet.address],
-        })
-        .expect(400);
-    });
-
-    it('should reject malformed request (missing publicAddresses)', () => {
-      return request(app.getHttpServer())
-        .post('/chest/store')
-        .send({
-          secret: createMockEncryptedPayload(),
-        })
-        .expect(400);
-    });
-
-    it('should accept checksummed addresses', () => {
-      return request(app.getHttpServer())
-        .post('/chest/store')
-        .send({
-          secret: createMockEncryptedPayload(),
-          publicAddresses: ['0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed'],
-        })
-        .expect(201);
-    });
-
-    it('should create chest.json file if it does not exist', async () => {
-      expect(fs.existsSync(chestPath)).toBe(false);
-
+    it('should return 401 without SIWE authentication', async () => {
       await request(app.getHttpServer())
         .post('/chest/store')
         .send({
           secret: createMockEncryptedPayload(),
           publicAddresses: [wallet.address],
         })
-        .expect(201);
+        .expect(401);
 
+      expect(fs.existsSync(chestPath)).toBe(false);
+    });
+
+    it('should return 401 with invalid SIWE signature', async () => {
+      const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation();
+      const headers = await siweHeaders(wallet);
+
+      await request(app.getHttpServer())
+        .post('/chest/store')
+        .set({ ...headers, 'x-siwe-signature': '0x' + '00'.repeat(65) })
+        .send({
+          secret: createMockEncryptedPayload(),
+          publicAddresses: [wallet.address],
+        })
+        .expect(401);
+
+      consoleErrorSpy.mockRestore();
+      expect(fs.existsSync(chestPath)).toBe(false);
+    });
+
+    it('should return 403 when caller is not among publicAddresses', async () => {
+      const res = await storeAs(wallet2, {
+        secret: createMockEncryptedPayload(),
+        publicAddresses: [wallet.address],
+      });
+
+      expect(res.status).toBe(403);
+      expect(fs.existsSync(chestPath)).toBe(false);
+    });
+
+    it('should match caller against publicAddresses case-insensitively', async () => {
+      const res = await storeAs(wallet, {
+        secret: createMockEncryptedPayload(),
+        publicAddresses: [wallet.address.toLowerCase()],
+      });
+
+      expect(res.status).toBe(201);
+    });
+
+    it('should reject invalid encrypted payload', async () => {
+      const res = await storeAs(wallet, {
+        secret: { recipients: [] },
+        publicAddresses: [wallet.address],
+      });
+
+      expect(res.status).toBe(400);
+    });
+
+    it('should reject empty publicAddresses array', async () => {
+      const res = await storeAs(wallet, {
+        secret: createMockEncryptedPayload(),
+        publicAddresses: [],
+      });
+
+      expect(res.status).toBe(400);
+    });
+
+    it('should reject invalid Ethereum address', async () => {
+      const res = await storeAs(wallet, {
+        secret: createMockEncryptedPayload(),
+        publicAddresses: [wallet.address, 'invalid-address'],
+      });
+
+      expect(res.status).toBe(400);
+    });
+
+    it('should reject malformed request (missing secret)', async () => {
+      const res = await storeAs(wallet, {
+        publicAddresses: [wallet.address],
+      });
+
+      expect(res.status).toBe(400);
+    });
+
+    it('should reject malformed request (missing publicAddresses)', async () => {
+      const res = await storeAs(wallet, {
+        secret: createMockEncryptedPayload(),
+      });
+
+      expect(res.status).toBe(400);
+    });
+
+    it('should accept checksummed addresses', async () => {
+      const res = await storeAs(wallet, {
+        secret: createMockEncryptedPayload(),
+        publicAddresses: [
+          wallet.address,
+          '0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed',
+        ],
+      });
+
+      expect(res.status).toBe(201);
+    });
+
+    it('should create chest.json file if it does not exist', async () => {
+      expect(fs.existsSync(chestPath)).toBe(false);
+
+      const res = await storeAs(wallet, {
+        secret: createMockEncryptedPayload(),
+        publicAddresses: [wallet.address],
+      });
+
+      expect(res.status).toBe(201);
       expect(fs.existsSync(chestPath)).toBe(true);
     });
   });
@@ -199,12 +266,10 @@ describe('Chest Endpoints (e2e)', () => {
 
     beforeEach(async () => {
       // Store a secret first
-      const storeResponse = await request(app.getHttpServer())
-        .post('/chest/store')
-        .send({
-          secret: createMockEncryptedPayload(),
-          publicAddresses: [wallet.address],
-        });
+      const storeResponse = await storeAs(wallet, {
+        secret: createMockEncryptedPayload(),
+        publicAddresses: [wallet.address],
+      });
 
       slot = (storeResponse.body as { slot: string }).slot;
 
@@ -328,12 +393,10 @@ describe('Chest Endpoints (e2e)', () => {
 
     it('should allow multiple owners to access the same secret', async () => {
       // Store a secret with multiple owners
-      const storeResponse = await request(app.getHttpServer())
-        .post('/chest/store')
-        .send({
-          secret: createMockEncryptedPayload(),
-          publicAddresses: [wallet.address, wallet2.address],
-        });
+      const storeResponse = await storeAs(wallet, {
+        secret: createMockEncryptedPayload(),
+        publicAddresses: [wallet.address, wallet2.address],
+      });
 
       const sharedSlot = (storeResponse.body as { slot: string }).slot;
 
@@ -396,12 +459,10 @@ describe('Chest Endpoints (e2e)', () => {
 
     it('should handle case-insensitive address matching', async () => {
       // Store with lowercase address
-      const storeResponse = await request(app.getHttpServer())
-        .post('/chest/store')
-        .send({
-          secret: createMockEncryptedPayload(),
-          publicAddresses: [wallet.address.toLowerCase()],
-        });
+      const storeResponse = await storeAs(wallet, {
+        secret: createMockEncryptedPayload(),
+        publicAddresses: [wallet.address.toLowerCase()],
+      });
 
       const testSlot = (storeResponse.body as { slot: string }).slot;
 
@@ -438,13 +499,11 @@ describe('Chest Endpoints (e2e)', () => {
   describe('Integration Flow (e2e)', () => {
     it('should complete full flow: store -> authenticate -> access', async () => {
       // Step 1: Store a secret
-      const storeResponse = await request(app.getHttpServer())
-        .post('/chest/store')
-        .send({
-          secret: createMockEncryptedPayload(),
-          publicAddresses: [wallet.address],
-        })
-        .expect(201);
+      const storeResponse = await storeAs(wallet, {
+        secret: createMockEncryptedPayload(),
+        publicAddresses: [wallet.address],
+      });
+      expect(storeResponse.status).toBe(201);
 
       const slot = (storeResponse.body as { slot: string }).slot;
       expect(slot).toBeDefined();
@@ -485,22 +544,18 @@ describe('Chest Endpoints (e2e)', () => {
 
     it('should store multiple secrets and access them independently', async () => {
       // Store first secret for wallet1
-      const store1Response = await request(app.getHttpServer())
-        .post('/chest/store')
-        .send({
-          secret: createMockEncryptedPayload(),
-          publicAddresses: [wallet.address],
-        });
+      const store1Response = await storeAs(wallet, {
+        secret: createMockEncryptedPayload(),
+        publicAddresses: [wallet.address],
+      });
 
       const slot1 = (store1Response.body as { slot: string }).slot;
 
       // Store second secret for wallet2
-      const store2Response = await request(app.getHttpServer())
-        .post('/chest/store')
-        .send({
-          secret: createMockEncryptedPayload(),
-          publicAddresses: [wallet2.address],
-        });
+      const store2Response = await storeAs(wallet2, {
+        secret: createMockEncryptedPayload(),
+        publicAddresses: [wallet2.address],
+      });
 
       const slot2 = (store2Response.body as { slot: string }).slot;
 

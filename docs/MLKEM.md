@@ -166,7 +166,7 @@ Get TEE attestation with server's ML-KEM public key.
 
 #### `POST /chest/store`
 
-Store multi-recipient encrypted secret.
+Store multi-recipient encrypted secret. Requires SIWE authentication (`x-siwe-message`, `x-siwe-signature`), and the caller must be one of `publicAddresses`; otherwise `401` or `403`.
 
 **Request:**
 ```json
@@ -283,7 +283,10 @@ const encrypted = await w3pk.mlkemEncrypt(
 // 5. Store encrypted data
 const { slot } = await fetch('https://vault.example.com/chest/store', {
   method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
+  headers: {
+    'Content-Type': 'application/json',
+    ...siweHeaders, // signed by the STANDARD address, see 6b
+  },
   body: JSON.stringify({
     secret: encrypted,
     publicAddresses: [await w3pk.getAddress('STANDARD')]
@@ -603,7 +606,10 @@ async function testWulongMLKEM() {
   // 4. Store encrypted secret on server
   const storeResponse = await fetch('http://localhost:3000/chest/store', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...siweHeaders, // signed by the STANDARD address, see 5b
+    },
     body: JSON.stringify({
       secret: encrypted,
       publicAddresses: [await w3pk.getAddress('STANDARD')]
@@ -684,6 +690,8 @@ You'll need to encrypt client-side first using w3pk, then:
 ```bash
 curl -X POST http://localhost:3000/chest/store \
   -H "Content-Type: application/json" \
+  -H "x-siwe-message: <base64-encoded SIWE message>" \
+  -H "x-siwe-signature: <hex signature>" \
   -d '{
     "secret": {
       "recipients": [
@@ -891,7 +899,7 @@ The complete production flow on Phala:
                            ↓
 ┌─────────────────────────────────────────────────────────────┐
 │ 4. Client stores encrypted payload                          │
-│    POST /chest/store                                         │
+│    POST /chest/store (SIWE, caller in publicAddresses)      │
 │    Body: { secret: encrypted, publicAddresses: [...] }      │
 └─────────────────────────────────────────────────────────────┘
                            ↓

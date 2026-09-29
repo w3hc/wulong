@@ -5,7 +5,7 @@
  * This script tests the complete multi-recipient encryption flow:
  * 1. Get server attestation (with ML-KEM public key)
  * 2. Encrypt secret for client + server
- * 3. Store encrypted secret on server
+ * 3. Store encrypted secret on server (SIWE-authenticated)
  * 4. Verify both client and server can decrypt
  *
  * Prerequisites:
@@ -17,6 +17,8 @@
 
 import { createMlKem1024 } from 'mlkem';
 import * as crypto from 'crypto';
+import { Wallet } from 'ethers';
+import { SiweMessage } from 'siwe';
 
 interface AttestationResponse {
   platform: string;
@@ -147,6 +149,43 @@ async function decryptMultiRecipient(
   return decrypted.toString('utf-8');
 }
 
+/**
+ * Sign in with Ethereum and return the headers expected by SiweGuard
+ */
+async function siweHeaders(
+  serverUrl: string,
+  wallet: Wallet,
+  statement: string,
+): Promise<Record<string, string>> {
+  const nonceResponse = await fetch(`${serverUrl}/auth/nonce`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ address: wallet.address }),
+  });
+
+  if (!nonceResponse.ok) {
+    throw new Error(`Nonce request failed: ${nonceResponse.status}`);
+  }
+
+  const { nonce } = (await nonceResponse.json()) as { nonce: string };
+
+  const message = new SiweMessage({
+    domain: new URL(serverUrl).hostname,
+    address: wallet.address,
+    uri: serverUrl,
+    version: '1',
+    chainId: 1,
+    nonce,
+    issuedAt: new Date().toISOString(),
+    statement,
+  }).prepareMessage();
+
+  return {
+    'x-siwe-message': Buffer.from(message).toString('base64'),
+    'x-siwe-signature': await wallet.signMessage(message),
+  };
+}
+
 async function testMLKEMWithServer() {
   console.log('🧪 Testing ML-KEM encryption flow with wulong server\n');
 
@@ -208,17 +247,26 @@ async function testMLKEMWithServer() {
     console.log(`     - Server can decrypt (for operations)\n`);
 
     // Step 4: Store encrypted secret on server
-    console.log('4️⃣  Storing encrypted secret on server...');
+    console.log('4️⃣  Storing encrypted secret on server (with SIWE)...');
 
-    // For this test, we'll use a dummy Ethereum address
-    const dummyAddress = '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266';
+    // Hardhat test account #0 (same as e2e tests)
+    const wallet = new Wallet(
+      '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80',
+    );
 
     const storeResponse = await fetch(`${serverUrl}/chest/store`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(await siweHeaders(
+          serverUrl,
+          wallet,
+          'Store encrypted secret in wulong',
+        )),
+      },
       body: JSON.stringify({
         secret: encrypted,
-        publicAddresses: [dummyAddress],
+        publicAddresses: [wallet.address],
       }),
     });
 

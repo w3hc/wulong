@@ -85,7 +85,15 @@ curl -k https://localhost:3000/chest/attestation
 
 Store a secret with owner-based access control.
 
-**Authentication:** None required for storing
+**Authentication:** Required (SIWE)
+
+**Headers:**
+```
+x-siwe-message: <base64-encoded SIWE message>
+x-siwe-signature: <hex signature>
+```
+
+**Who may store:** any SIWE-authenticated caller, only if their own address is in `publicAddresses` (compared case-insensitively). A caller can share a secret with other addresses, but can't store one on behalf of addresses they don't control. Each SIWE nonce is single-use, so storing and then accessing takes two sign-ins.
 
 **Request Body:**
 
@@ -107,6 +115,8 @@ Store a secret with owner-based access control.
 **Status Codes:**
 - `201 Created` - Secret stored successfully
 - `400 Bad Request` - Invalid request (empty secret, invalid addresses, etc.)
+- `401 Unauthorized` - Missing or invalid SIWE authentication
+- `403 Forbidden` - Caller is not one of `publicAddresses`
 
 **Example:**
 
@@ -114,6 +124,8 @@ Store a secret with owner-based access control.
 # Request
 curl -k -X POST https://localhost:3000/chest/store \
   -H "Content-Type: application/json" \
+  -H "x-siwe-message: <base64-encoded SIWE message>" \
+  -H "x-siwe-signature: <hex signature>" \
   -d '{
     "secret": "苟全性命於亂世，不求聞達於諸侯。",
     "publicAddresses": ["0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb"]
@@ -138,6 +150,11 @@ curl -k -X POST https://localhost:3000/chest/store \
    // Store encrypted secret
    await fetch('/chest/store', {
      method: 'POST',
+     headers: {
+       'Content-Type': 'application/json',
+       'x-siwe-message': btoa(siweMessage),  // signed by myAddress
+       'x-siwe-signature': signature,
+     },
      body: JSON.stringify({
        secret: JSON.stringify(encrypted),
        publicAddresses: [myAddress]

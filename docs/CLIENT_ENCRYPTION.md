@@ -174,11 +174,17 @@ const payload = {
 
 ### Step 3: Store Encrypted Secret
 
+Storing requires SIWE authentication, and the signing address must be one of `publicAddresses`. Sign in as shown in Step 4; each nonce is single-use, so sign in again before accessing.
+
 ```typescript
 // Store encrypted secret on server
 const storeResponse = await fetch('https://your-tee-service.com/chest/store', {
   method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
+  headers: {
+    'Content-Type': 'application/json',
+    'x-siwe-message': Buffer.from(message).toString('base64'),
+    'x-siwe-signature': signature,
+  },
   body: JSON.stringify({
     secret: JSON.stringify(payload),  // Store encrypted payload as string
     publicAddresses: ['0xYourEthereumAddress'],
@@ -306,7 +312,10 @@ const { payload } = await encryptForTee('my-secret-data', 'https://tee-service.c
 
 await fetch('https://tee-service.com/chest/store', {
   method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
+  headers: {
+    'Content-Type': 'application/json',
+    ...siweHeaders, // signed by myAddress, see Step 4
+  },
   body: JSON.stringify({
     secret: payload,
     publicAddresses: [myAddress],
@@ -334,7 +343,10 @@ const { payload } = await encryptForTee(
 // Store encrypted secret
 const response = await fetch('https://tee-service.com/chest/store', {
   method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
+  headers: {
+    'Content-Type': 'application/json',
+    ...siweHeaders, // signed by w3pk.getAddress(), see Step 4
+  },
   body: JSON.stringify({
     secret: payload,
     publicAddresses: [w3pk.getAddress()],

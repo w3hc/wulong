@@ -27,13 +27,26 @@ export class SecretController {
   constructor(private readonly secretService: SecretService) {}
 
   @Post('store')
+  @UseGuards(SiweGuard)
+  @ApiSecurity('SIWE')
   @ApiOperation({
     summary: 'Store a multi-recipient encrypted secret',
     description:
       'Stores a multi-recipient ML-KEM encrypted secret (from w3pk.mlkemEncrypt) and returns a unique slot identifier. ' +
       'The encrypted payload must include the server as one of the recipients (use mlkemPublicKey from /chest/attestation). ' +
       'Access is controlled via SIWE authentication (publicAddresses). ' +
+      'Requires SIWE authentication; the caller must be one of publicAddresses. ' +
       'CRITICAL: Verify attestation before encrypting!',
+  })
+  @ApiHeader({
+    name: 'x-siwe-message',
+    description: 'The SIWE message string (base64 encoded)',
+    required: true,
+  })
+  @ApiHeader({
+    name: 'x-siwe-signature',
+    description: 'The signature hex string',
+    required: true,
   })
   @ApiResponse({
     status: 201,
@@ -45,10 +58,22 @@ export class SecretController {
     description:
       'Invalid request - invalid encrypted payload, missing recipients, or invalid addresses',
   })
-  async store(@Body() dto: StoreRequestDto): Promise<StoreResponseDto> {
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized - missing or invalid SIWE authentication',
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - caller is not one of publicAddresses',
+  })
+  async store(
+    @Body() dto: StoreRequestDto,
+    @Req() req: { user: { address: string } },
+  ): Promise<StoreResponseDto> {
     const slot = await this.secretService.store(
       dto.secret,
       dto.publicAddresses,
+      req.user.address,
     );
     return { slot };
   }
