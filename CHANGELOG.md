@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- `docker-compose.yml` ran `julienberanger/wulong:latest`, a mutable tag. It now pins the v0.2.0 image, `ghcr.io/w3hc/wulong@sha256:fdbd5ffa…`, so the attested compose hash commits to the image ([#40](https://github.com/w3hc/wulong/issues/40)).
+- A tag pushed twice ran two releases concurrently and added the image digest to the release notes twice. The docs link in those notes was relative and did not resolve.
+
+## [0.2.0] - 2026-09-29
+
 ### Added
 
 - `THROTTLE_LIMIT` and `THROTTLE_TTL`: requests allowed per route per IP, and the window in milliseconds. Default to 10 per 60 s.

@@ -5,6 +5,9 @@ on:
     tags:
       - 'v*'
 
+# A tag pushed twice must not race two releases into the same notes
+concurrency: release-${{ github.ref }}
+
 permissions:
   contents: write
   packages: write
@@ -57,9 +60,12 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DIGEST: ${{ steps.build.outputs.digest }}
         run: |
-          notes=$(printf '## Image\n\n```yaml\nimage: %s@%s\n```\n\nPin this line in `docker-compose.yml` to deploy this release. See [docs/DOCKER.md](docs/DOCKER.md#releases) to rebuild it and compare the digest.\n' "$IMAGE" "$DIGEST")
+          notes=$(printf '## Image\n\n```yaml\nimage: %s@%s\n```\n\nPin this line in `docker-compose.yml` to deploy this release. See [docs/DOCKER.md](%s/%s/blob/%s/docs/DOCKER.md#releases) to rebuild it and compare the digest.\n' "$IMAGE" "$DIGEST" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_REF_NAME")
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             body=$(gh release view "$GITHUB_REF_NAME" --json body -q .body)
+            if grep -qF "$IMAGE@$DIGEST" <<<"$body"; then
+              exit 0
+            fi
             gh release edit "$GITHUB_REF_NAME" --notes "$body"$'\n\n'"$notes"
           else
             gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes --notes "$notes"

@@ -2,8 +2,9 @@ version: '3.8'
 
 services:
   wulong:
-    image: julienberanger/wulong:latest
-    pull_policy: always
+    # v0.2.0, pinned by digest so the attested compose hash commits to the image.
+    # Take the digest from the release notes, see docs/DOCKER.md#releases.
+    image: ghcr.io/w3hc/wulong@sha256:fdbd5ffab4367083cfacf4316e145746555d1ef267a2eea564c797f14db3bf63
     ports:
       - "3000:3000"
     volumes:
