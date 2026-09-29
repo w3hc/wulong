@@ -168,8 +168,8 @@ This overview covers architectural concepts and security properties. For practic
 
 ## Technical Stack
 
-- **Runtime**: Node.js 20+ with NestJS 11
-- **Language**: TypeScript 5.7
+- **Runtime**: Node.js 24+ with NestJS 12
+- **Language**: TypeScript 6
 - **Package Manager**: pnpm
 - **TEE Platforms**: AMD SEV-SNP, Intel TDX, AWS Nitro, Phala Network
 - **Authentication**: SIWE (Sign-In with Ethereum)
