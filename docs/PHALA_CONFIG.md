@@ -64,6 +64,7 @@ services:
     environment:
       - NODE_ENV=${NODE_ENV}
       - KMS_URL=${KMS_URL}
+      - CORS_ORIGINS=${CORS_ORIGINS}  # Browser UIs allowed to call the API
       - TLS_ALT_NAMES=${TLS_ALT_NAMES}  # <APP_ID>-3000s.<CLUSTER>.phala.network
     restart: unless-stopped
 ```

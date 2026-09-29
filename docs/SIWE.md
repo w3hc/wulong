@@ -541,14 +541,13 @@ const siweMessage = new SiweMessage({
 
 ### CORS Configuration
 
-Update CORS settings in [src/main.ts](../src/main.ts) to allow your frontend domain:
+List the origins of your frontends in `CORS_ORIGINS`, comma-separated:
 
-```typescript
-app.enableCors({
-  origin: 'https://your-frontend.com', // Update in production
-  credentials: true,
-});
+```bash
+CORS_ORIGINS=https://your-frontend.com,http://localhost:5173
 ```
+
+Each entry is an exact origin (`scheme://host[:port]`, no path or trailing slash); startup fails on anything else. Unset, no origin is allowed. SIWE travels in headers, not cookies, so CORS runs without credentials and clients must not set `credentials: 'include'`.
 
 ### HTTPS in Production
 
