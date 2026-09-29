@@ -11,12 +11,9 @@ import {
   KEY_MANIFEST_TYPES,
   KeyManifest,
 } from '../keys/key-derivation.service';
-import {
-  KeyBindingEvidence,
-  TDX_QUOTE_REPORT_DATA_OFFSET,
-  verifyKeyBinding,
-} from './key-binding';
+import { KeyBindingEvidence, verifyKeyBinding } from './key-binding';
 import { buildReportData } from './report-data';
+import { TDX_QUOTE_REPORT_DATA_OFFSET } from './tdx-quote';
 
 const identity = new SigningKey('0x' + '42'.repeat(32));
 const ek = Buffer.alloc(1568, 0x01);
