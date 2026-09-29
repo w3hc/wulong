@@ -14,8 +14,10 @@
  *
  * What it verifies:
  *   0. Key binding: report_data commits to the returned ML-KEM and identity
- *      keys and to a fresh nonce, the quote carries that report_data, and the
- *      key manifest is signed by the identity key (docs/KEY_DERIVATION.md)
+ *      keys, to the TLS certificate and to a fresh nonce, the quote carries
+ *      that report_data, the key manifest is signed by the identity key, and
+ *      the TLS session was terminated by that certificate, inside the enclave
+ *      (docs/KEY_DERIVATION.md)
  *   1. Platform is Intel TDX (not 'none')
  *   2. Certificate chain signature (Intel root CA)
  *   3. TDX quote structure validity
@@ -33,6 +35,9 @@
 
 import * as fs from 'fs';
 import * as crypto from 'crypto';
+import * as http from 'http';
+import * as https from 'https';
+import { TLSSocket } from 'tls';
 import {
   KeyBindingEvidence,
   verifyKeyBinding,
@@ -107,28 +112,59 @@ function info(message: string) {
 }
 
 /**
- * Fetch attestation from URL or read from file
+ * Fetch attestation from URL or read from file. Over https, also returns the
+ * DER certificate the TLS session presented.
  */
 async function fetchAttestation(
   source: string,
   nonce: Buffer,
-): Promise<AttestationReport> {
+): Promise<{ attestation: AttestationReport; servedCertificate?: Buffer }> {
   if (source.startsWith('http://') || source.startsWith('https://')) {
     const url = new URL(source);
     url.searchParams.set('nonce', nonce.toString('hex'));
     log(`Fetching attestation from: ${url}`, 'blue');
-    const response = await fetch(url);
-
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    }
-
-    return await response.json();
+    return await get(url);
   } else {
     log(`Reading attestation from file: ${source}`, 'blue');
     const content = fs.readFileSync(source, 'utf-8');
-    return JSON.parse(content);
+    return { attestation: JSON.parse(content) };
   }
+}
+
+/**
+ * The enclave certificate is issued by the app's dstack KMS CA, not a public
+ * CA, so it is not checked against the system trust store: it is trusted only
+ * if the attestation binds it, which verifyKeyBinding checks.
+ */
+function get(
+  url: URL,
+): Promise<{ attestation: AttestationReport; servedCertificate?: Buffer }> {
+  const client = url.protocol === 'https:' ? https : http;
+  return new Promise((resolve, reject) => {
+    const req = client.get(url, { rejectUnauthorized: false }, (res) => {
+      const servedCertificate =
+        res.socket instanceof TLSSocket
+          ? res.socket.getPeerCertificate().raw
+          : undefined;
+      const chunks: Buffer[] = [];
+      res.on('data', (chunk: Buffer) => chunks.push(chunk));
+      res.on('end', () => {
+        if (res.statusCode !== 200) {
+          reject(new Error(`HTTP ${res.statusCode}: ${res.statusMessage}`));
+          return;
+        }
+        try {
+          resolve({
+            attestation: JSON.parse(Buffer.concat(chunks).toString('utf-8')),
+            servedCertificate,
+          });
+        } catch (err) {
+          reject(err);
+        }
+      });
+    });
+    req.on('error', reject);
+  });
 }
 
 /**
@@ -289,27 +325,39 @@ async function verifyAttestation(source: string) {
     // 1. Fetch attestation with a fresh nonce, when fetched live
     const live = source.startsWith('http://') || source.startsWith('https://');
     const nonce = crypto.randomBytes(32);
-    const attestation = await fetchAttestation(source, nonce);
+    const { attestation, servedCertificate } = await fetchAttestation(
+      source,
+      nonce,
+    );
 
     // 1b. Check the keys are bound to the quote
     log(`\n🔑 Key Binding Check:`, 'blue');
-    const { mlkemPublicKey, identityPublicKey, reportData, keyManifest } =
-      attestation;
+    const {
+      mlkemPublicKey,
+      identityPublicKey,
+      reportData,
+      keyManifest,
+      tlsCertificate,
+    } = attestation;
     if (!mlkemPublicKey || !identityPublicKey || !reportData || !keyManifest) {
       error('The attestation carries no key binding (use /chest/attestation)');
       process.exit(1);
     }
     if (!live) {
       warning('Read from a file: the nonce is taken from reportData, so freshness is not checked');
+      warning('Read from a file: the TLS session is not checked');
+    } else if (!servedCertificate) {
+      warning('Fetched over plain http: the TLS session is not checked');
     }
     const failures = verifyKeyBinding(
-      { mlkemPublicKey, identityPublicKey, reportData, keyManifest },
+      { mlkemPublicKey, identityPublicKey, reportData, keyManifest, tlsCertificate },
       {
         nonce: live ? nonce : Buffer.from(reportData.slice(-64), 'hex'),
         quote:
           attestation.platform === 'intel-tdx'
             ? Buffer.from(attestation.report, 'base64')
             : undefined,
+        servedCertificate,
       },
     );
     if (failures.length > 0) {
@@ -318,6 +366,9 @@ async function verifyAttestation(source: string) {
       process.exit(1);
     }
     success('report_data commits to the ML-KEM and identity keys');
+    if (servedCertificate) {
+      success('TLS terminates in the enclave: the session certificate is the bound one');
+    }
     success(`Key manifest signed by the identity key (app ${keyManifest.manifest.appId})`);
     if (attestation.platform === 'intel-tdx') {
       success('The quote carries that report_data');

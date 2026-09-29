@@ -27,7 +27,12 @@ const sign = (manifest: KeyManifest, key = identity) =>
     TypedDataEncoder.hash(KEY_MANIFEST_DOMAIN, KEY_MANIFEST_TYPES, manifest),
   ).serialized;
 
-const evidence = (overrides: Partial<KeyBindingEvidence> = {}) => {
+const certificate = Buffer.from([0x30, 0x82, 0x01, 0x0a]);
+
+const evidence = (
+  overrides: Partial<KeyBindingEvidence> = {},
+  tlsCertificate?: Buffer,
+) => {
   const manifest: KeyManifest = {
     appId: '0x1111111111111111111111111111111111111111',
     mlkemPublicKeyHash: `0x${createHash('sha256').update(ek).digest('hex')}`,
@@ -35,7 +40,11 @@ const evidence = (overrides: Partial<KeyBindingEvidence> = {}) => {
     epoch: 1,
   };
   const reportData = buildReportData(
-    { mlkemPublicKey: ek, identityPublicKey: getBytes(identity.publicKey) },
+    {
+      mlkemPublicKey: ek,
+      identityPublicKey: getBytes(identity.publicKey),
+      tlsCertificateDer: tlsCertificate,
+    },
     nonce,
   );
   return {
@@ -43,6 +52,7 @@ const evidence = (overrides: Partial<KeyBindingEvidence> = {}) => {
     identityPublicKey: identity.publicKey,
     reportData: `0x${reportData.toString('hex')}`,
     keyManifest: { manifest, signature: sign(manifest) },
+    tlsCertificate: tlsCertificate?.toString('base64'),
     ...overrides,
   };
 };
@@ -100,6 +110,45 @@ describe('verifyKeyBinding', () => {
 
     expect(verifyKeyBinding({ ...valid, keyManifest }, { nonce })).toEqual([
       'The key manifest is not signed by the identity key',
+    ]);
+  });
+
+  it('accepts a TLS session whose certificate the attestation binds', () => {
+    expect(
+      verifyKeyBinding(evidence({}, certificate), {
+        nonce,
+        servedCertificate: certificate,
+      }),
+    ).toEqual([]);
+  });
+
+  it('rejects a bound certificate swapped in the response', () => {
+    const valid = evidence({}, certificate);
+
+    expect(
+      verifyKeyBinding(
+        { ...valid, tlsCertificate: Buffer.from([0x30]).toString('base64') },
+        { nonce },
+      ),
+    ).toEqual(['reportData does not commit to the returned keys and nonce']);
+  });
+
+  it('rejects a TLS session terminated by another certificate', () => {
+    expect(
+      verifyKeyBinding(evidence({}, certificate), {
+        nonce,
+        servedCertificate: Buffer.from([0x30, 0x00]),
+      }),
+    ).toEqual([
+      'The TLS session certificate is not the one bound by the attestation',
+    ]);
+  });
+
+  it('rejects a TLS session when no certificate is bound', () => {
+    expect(
+      verifyKeyBinding(evidence(), { nonce, servedCertificate: certificate }),
+    ).toEqual([
+      'The attestation binds no TLS certificate: TLS terminates outside the enclave',
     ]);
   });
 });
