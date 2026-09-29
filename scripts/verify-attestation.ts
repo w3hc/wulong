@@ -21,7 +21,7 @@
  *   1. Platform is Intel TDX (not 'none')
  *   2. Certificate chain signature (Intel root CA)
  *   3. TDX quote structure validity
- *   4. Measurement (MRTD) extraction
+ *   4. MRTD and RTMR0-3 read from the quote match the returned measurements
  *   5. Quote freshness (timestamp)
  *
  * What it does NOT verify (requires Intel DCAP):
@@ -29,6 +29,8 @@
  *   - TCB (Trusted Computing Base) level checks
  *   - Certificate revocation status
  *   - The GetKey signature chain up to the on-chain KMS root
+ *   - That RTMR3 is the one replayed from the published compose file
+ *     (docs/TEE_SETUP.md#measurements)
  *
  * For full verification, use Intel's DCAP library or Phala's verification service.
  */
@@ -42,13 +44,14 @@ import {
   KeyBindingEvidence,
   verifyKeyBinding,
 } from '../src/attestation/key-binding';
+import { TdxMeasurements, parseTdxQuote } from '../src/attestation/tdx-quote';
 
 interface AttestationReport extends Partial<KeyBindingEvidence> {
-  platform: 'amd-sev-snp' | 'intel-tdx' | 'aws-nitro' | 'none';
+  platform: 'intel-tdx' | 'none';
   report: string;
-  measurement: string;
+  measurements: TdxMeasurements | null;
+  eventLog: string | null;
   timestamp: string;
-  instructions?: string;
 }
 
 // Intel TDX Quote v4 Structure (simplified)
@@ -61,18 +64,6 @@ interface TdxQuoteHeader {
   pceSvn: number;        // Offset 10, 2 bytes
   qeVendorId: Buffer;    // Offset 12, 16 bytes
   userData: Buffer;      // Offset 28, 20 bytes
-}
-
-interface TdxQuoteBody {
-  mrtd: Buffer;          // Offset 112, 48 bytes - Measurement of TD
-  mrconfigid: Buffer;    // Offset 160, 48 bytes
-  mrowner: Buffer;       // Offset 208, 48 bytes
-  mrownerconfig: Buffer; // Offset 256, 48 bytes
-  rtmr0: Buffer;         // Runtime measurement 0
-  rtmr1: Buffer;         // Runtime measurement 1
-  rtmr2: Buffer;         // Runtime measurement 2
-  rtmr3: Buffer;         // Runtime measurement 3
-  reportData: Buffer;    // Offset 536, 64 bytes - User provided data
 }
 
 // Intel Root CA public keys (for basic verification)
@@ -179,26 +170,6 @@ function parseTdxQuoteHeader(quote: Buffer): TdxQuoteHeader {
     pceSvn: quote.readUInt16LE(10),
     qeVendorId: quote.subarray(12, 28),
     userData: quote.subarray(28, 48),
-  };
-}
-
-/**
- * Parse TDX quote body (TD Report structure)
- */
-function parseTdxQuoteBody(quote: Buffer): TdxQuoteBody {
-  // TD Report starts at offset 48 in the quote
-  const tdReport = quote.subarray(48);
-
-  return {
-    mrtd: tdReport.subarray(112 - 48, 160 - 48),           // 48 bytes
-    mrconfigid: tdReport.subarray(160 - 48, 208 - 48),     // 48 bytes
-    mrowner: tdReport.subarray(208 - 48, 256 - 48),        // 48 bytes
-    mrownerconfig: tdReport.subarray(256 - 48, 304 - 48),  // 48 bytes
-    rtmr0: tdReport.subarray(304 - 48, 352 - 48),          // 48 bytes
-    rtmr1: tdReport.subarray(352 - 48, 400 - 48),          // 48 bytes
-    rtmr2: tdReport.subarray(400 - 48, 448 - 48),          // 48 bytes
-    rtmr3: tdReport.subarray(448 - 48, 496 - 48),          // 48 bytes
-    reportData: tdReport.subarray(536 - 48, 600 - 48),     // 64 bytes
   };
 }
 
@@ -421,33 +392,25 @@ async function verifyAttestation(source: string) {
 
     // 5. Extract measurements
     log(`\n📏 Measurements:`, 'blue');
-    const body = parseTdxQuoteBody(quoteBuffer);
+    const measurements = parseTdxQuote(quoteBuffer).measurements;
 
-    info(`  MRTD (Measurement of TD):`);
-    info(`    ${body.mrtd.toString('hex')}`);
+    info(`  MRTD:  ${measurements.mrtd}  (dstack OS firmware)`);
+    info(`  RTMR0: ${measurements.rtmr0}  (virtual hardware)`);
+    info(`  RTMR1: ${measurements.rtmr1}  (kernel)`);
+    info(`  RTMR2: ${measurements.rtmr2}  (kernel cmdline, initrd)`);
+    info(`  RTMR3: ${measurements.rtmr3}  (app: compose hash)`);
 
-    // Compare with provided measurement
-    const providedMeasurement = attestation.measurement;
-    info(`\n  Provided measurement:`);
-    info(`    ${providedMeasurement}`);
-
-    // Check if all zeros (indicates issue with extraction)
-    if (body.mrtd.every(byte => byte === 0)) {
-      warning('MRTD is all zeros - measurement may not have been extracted correctly');
-      warning('This could indicate an issue with quote parsing or generation');
-    } else if (body.mrtd.toString('hex') === providedMeasurement) {
-      success('MRTD matches provided measurement');
-    } else {
-      warning('MRTD does not match provided measurement');
-      warning('This may be due to different extraction offsets');
+    const mismatched = (
+      Object.keys(measurements) as (keyof TdxMeasurements)[]
+    ).filter((name) => attestation.measurements?.[name] !== measurements[name]);
+    if (mismatched.length > 0) {
+      error(`The returned measurements differ from the quote: ${mismatched.join(', ')}`);
+      process.exit(1);
     }
-
-    // Show other measurements
-    info(`\n  MRCONFIGID: ${body.mrconfigid.toString('hex').substring(0, 32)}...`);
-    info(`  RTMR0: ${body.rtmr0.toString('hex').substring(0, 32)}...`);
-    info(`  RTMR1: ${body.rtmr1.toString('hex').substring(0, 32)}...`);
-    info(`  RTMR2: ${body.rtmr2.toString('hex').substring(0, 32)}...`);
-    info(`  RTMR3: ${body.rtmr3.toString('hex').substring(0, 32)}...`);
+    success('The returned measurements are the quote\'s');
+    if (!attestation.eventLog) {
+      warning('No event log: RTMR3 cannot be replayed');
+    }
 
     // 6. Extract and verify certificate chain
     const certs = extractCertificateChain(quoteBuffer);
@@ -483,7 +446,7 @@ async function verifyAttestation(source: string) {
     info('     -H "Content-Type: application/json" \\');
     info(`     -d '{"quote": "${attestation.report.substring(0, 40)}..."}'`);
     info('   ```');
-    info('   Response: { "valid": true, "tcb_status": "UpToDate", "measurement": "..." }');
+    info('   Response: { "valid": true, "tcb_status": "UpToDate", ... }');
     info('');
     info('   📖 Docs: https://docs.phala.com/phala-cloud/attestation/verify-your-application');
     info('');
@@ -526,49 +489,14 @@ async function verifyAttestation(source: string) {
     log(`\n4️⃣  Compare Measurements Against Published Values`, 'blue');
     info('');
 
-    // Detect which measurement to use
-    const hasRTMR2 = body.rtmr2.some(byte => byte !== 0);
-    const hasRTMR3 = body.rtmr3.some(byte => byte !== 0);
-    const hasMRTD = body.mrtd.some(byte => byte !== 0);
-
-    if (hasRTMR2 || hasRTMR3) {
-      warning('   Phala uses RTMR (Runtime Measurements) instead of MRTD:');
-      info('');
-      if (hasRTMR2) {
-        info(`   RTMR2 (Image): ${body.rtmr2.toString('hex')}`);
-      }
-      if (hasRTMR3) {
-        info(`   RTMR3 (Config): ${body.rtmr3.toString('hex')}`);
-      }
-      info('');
-      info('   Save these measurements:');
-      if (hasRTMR2) {
-        info(`   echo "${body.rtmr2.toString('hex')}" > expected-rtmr2.txt`);
-      }
-      if (hasRTMR3) {
-        info(`   echo "${body.rtmr3.toString('hex')}" > expected-rtmr3.txt`);
-      }
-    } else if (hasMRTD) {
-      info(`   MRTD (TD Measurement): ${body.mrtd.toString('hex')}`);
-      info('');
-      info('   Save this measurement:');
-      info(`   echo "${body.mrtd.toString('hex')}" > expected-mrtd.txt`);
-    } else {
-      warning('   All measurements are zeros - this may indicate:');
-      warning('   - Pre-boot or initialization state');
-      warning('   - Quote parsing offset issue');
-      warning('   Contact Phala support if this persists');
-    }
-
+    info('   On dstack, RTMR3 identifies the app: it extends the compose hash,');
+    info('   the app id and the instance events. MRTD and RTMR0-2 identify the');
+    info('   dstack OS image and should match the published dstack release.');
     info('');
-    info('   Then publish in your project README:');
-    info('   ```markdown');
-    info('   ## Expected TEE Measurements');
-    info('   - Platform: Intel TDX on Phala Network');
-    if (hasRTMR2) info(`   - RTMR2: ${body.rtmr2.toString('hex').substring(0, 64)}...`);
-    if (hasRTMR3) info(`   - RTMR3: ${body.rtmr3.toString('hex').substring(0, 64)}...`);
-    info(`   - Verified: ${new Date().toISOString().split('T')[0]}`);
-    info('   ```');
+    info('   Replay RTMR3 from the event log and check its compose-hash event');
+    info('   equals sha256 of your app-compose.json: see docs/TEE_SETUP.md#measurements');
+    info('');
+    info(`   RTMR3: ${measurements.rtmr3}`);
     info('');
 
     log(`\n5️⃣  Implement Client-Side Verification`, 'blue');
@@ -595,11 +523,9 @@ async function verifyAttestation(source: string) {
     info('       throw new Error(`Attestation failed: ${verification.tcb_status}`);');
     info('     }');
     info('');
-    info('     // Step 3: Compare measurement');
-    const expectedMeasurement = hasRTMR2 ? body.rtmr2.toString('hex') : body.mrtd.toString('hex');
-    info(`     const EXPECTED_RTMR2 = "${expectedMeasurement.substring(0, 64)}...";`);
-    info('     // Extract RTMR2 from attestation or verification response');
-    info('     if (verification.measurement !== EXPECTED_RTMR2) {');
+    info('     // Step 3: Compare the app measurement, read from the verified quote');
+    info(`     const EXPECTED_RTMR3 = "${measurements.rtmr3.substring(0, 32)}...";`);
+    info('     if (attestation.measurements.rtmr3 !== EXPECTED_RTMR3) {');
     info('       throw new Error("Unexpected code running in TEE");');
     info('     }');
     info('');

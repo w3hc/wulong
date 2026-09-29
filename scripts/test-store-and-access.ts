@@ -24,9 +24,8 @@ import { SiweMessage } from 'siwe';
 interface AttestationResponse {
   platform: string;
   report: string;
-  measurement: string;
+  measurements: { rtmr3: string } | null;
   timestamp: string;
-  publicKey?: string;
   mlkemPublicKey?: string;
 }
 
@@ -170,11 +169,8 @@ async function testStoreAndAccess() {
     console.log(
       `  ✅ ML-KEM Public Key: ${attestation.mlkemPublicKey.substring(0, 32)}...`,
     );
-    if (attestation.publicKey) {
-      console.log(`  ✅ Server Ethereum Address: ${attestation.publicKey}`);
-    }
     console.log(
-      `  ⚠️  Measurement: ${attestation.measurement.substring(0, 32)}...`,
+      `  ⚠️  RTMR3: ${attestation.measurements?.rtmr3.substring(0, 32) ?? 'none (not in a TEE)'}...`,
     );
     console.log();
 

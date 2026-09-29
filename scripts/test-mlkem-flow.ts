@@ -118,12 +118,12 @@ async function testMLKEMFlow() {
     `  ✅ Private key: ${privateKeyBase64.substring(0, 32)}... (${privateKey.length} bytes)\n`,
   );
 
-  // Step 2: Client gets attestation (simulating GET /attestation)
+  // Step 2: Client gets attestation (simulating GET /chest/attestation)
   console.log('2️⃣  Client: Getting TEE attestation...');
   const attestation = {
     platform: 'none',
     mlkemPublicKey: publicKeyBase64,
-    measurement: 'test-measurement-hash',
+    measurements: null,
   };
   console.log(`  ✅ Received TEE public key\n`);
 
