@@ -17,6 +17,7 @@ jest.mock('fs', () => ({
   promises: {
     readFile: jest.fn(),
     writeFile: jest.fn(),
+    rename: jest.fn(),
   },
 }));
 
@@ -100,6 +101,7 @@ describe('SecretService', () => {
       jest.spyOn(fs, 'existsSync').mockReturnValue(false);
       // Mock fs.promises.writeFile
       jest.spyOn(fs.promises, 'writeFile').mockResolvedValue();
+      jest.spyOn(fs.promises, 'rename').mockResolvedValue();
       // Mock isAddress
       (ethers.isAddress as unknown as jest.Mock).mockImplementation(
         (address: string) => {
@@ -127,11 +129,6 @@ describe('SecretService', () => {
       expect(slot).toBeDefined();
       expect(typeof slot).toBe('string');
       expect(slot).toMatch(/^[0-9a-f]{64}$/); // 32 bytes hex = 64 chars
-      expect(fs.promises.writeFile).toHaveBeenCalledWith(
-        testChestPath,
-        expect.any(String),
-        'utf-8',
-      );
     });
 
     it('should throw BadRequestException if payload is invalid', async () => {
@@ -245,6 +242,59 @@ describe('SecretService', () => {
       // Should contain both old and new entries
       expect(Object.keys(writtenData)).toContain('existingSlot');
       expect(Object.keys(writtenData).length).toBe(2);
+    });
+
+    it('should write to a temp file and rename it over the chest', async () => {
+      const encryptedPayload = createMockEncryptedPayload();
+      const address = '0xbfbaa5a59e3b6c06aff9c975092b8705f804fa1c';
+
+      await service.store(encryptedPayload, [address], address);
+
+      expect(fs.promises.writeFile).toHaveBeenCalledWith(
+        `${testChestPath}.tmp`,
+        expect.any(String),
+        { encoding: 'utf-8', flush: true },
+      );
+      expect(fs.promises.rename).toHaveBeenCalledWith(
+        `${testChestPath}.tmp`,
+        testChestPath,
+      );
+    });
+
+    it('should not lose writes when stores run concurrently', async () => {
+      let onDisk: string | undefined;
+      jest.spyOn(fs, 'existsSync').mockImplementation(() => !!onDisk);
+      jest
+        .spyOn(fs.promises, 'readFile')
+        .mockImplementation(() => Promise.resolve(onDisk as string));
+      jest.spyOn(fs.promises, 'writeFile').mockImplementation((_path, data) => {
+        onDisk = data as string;
+        return Promise.resolve();
+      });
+
+      const address = '0xbfbaa5a59e3b6c06aff9c975092b8705f804fa1c';
+      const slots = await Promise.all(
+        Array.from({ length: 5 }, () =>
+          service.store(createMockEncryptedPayload(), [address], address),
+        ),
+      );
+
+      const stored = JSON.parse(onDisk as string) as Record<string, unknown>;
+      expect(Object.keys(stored).sort()).toEqual([...slots].sort());
+    });
+
+    it('should keep storing after a failed write', async () => {
+      jest
+        .spyOn(fs.promises, 'writeFile')
+        .mockRejectedValueOnce(new Error('Write error'));
+
+      const address = '0xbfbaa5a59e3b6c06aff9c975092b8705f804fa1c';
+      await expect(
+        service.store(createMockEncryptedPayload(), [address], address),
+      ).rejects.toThrow('Failed to save secret');
+      await expect(
+        service.store(createMockEncryptedPayload(), [address], address),
+      ).resolves.toEqual(expect.any(String));
     });
 
     it('should throw error if file write fails', async () => {

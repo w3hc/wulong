@@ -30,6 +30,7 @@ interface SecretData {
 @Injectable()
 export class SecretService {
   private readonly secretPath: string;
+  private writeQueue: Promise<unknown> = Promise.resolve();
 
   constructor(
     private readonly teePlatformService: TeePlatformService,
@@ -112,17 +113,18 @@ export class SecretService {
     // Generate unique slot
     const slot = this.generateSlot();
 
-    // Load existing secret data
-    const secretData = await this.loadSecret();
+    // Serialize read-modify-write so concurrent stores don't overwrite each other
+    await this.withWriteLock(async () => {
+      const secretData = await this.loadSecret();
 
-    // Store the entry (encrypted at rest - quantum-safe!)
-    secretData[slot] = {
-      encryptedPayload,
-      publicAddresses: normalizedAddresses,
-    };
+      // Store the entry (encrypted at rest - quantum-safe!)
+      secretData[slot] = {
+        encryptedPayload,
+        publicAddresses: normalizedAddresses,
+      };
 
-    // Save to file
-    await this.saveSecret(secretData);
+      await this.saveSecret(secretData);
+    });
 
     return slot;
   }
@@ -217,6 +219,17 @@ export class SecretService {
   }
 
   /**
+   * Runs `fn` after every previously queued write has settled.
+   * @param fn The critical section
+   * @returns The result of `fn`
+   */
+  private withWriteLock<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.writeQueue.then(fn, fn);
+    this.writeQueue = run.catch(() => undefined);
+    return run;
+  }
+
+  /**
    * Loads the secret data from the JSON file.
    * @returns The secret data object
    */
@@ -240,16 +253,19 @@ export class SecretService {
   }
 
   /**
-   * Saves the secret data to the JSON file.
+   * Saves the secret data to the JSON file atomically: writes a flushed
+   * temp file, then renames it over the chest, so a crash never leaves
+   * a partially written chest behind.
    * @param data The secret data to save
    */
   private async saveSecret(data: SecretData): Promise<void> {
+    const tmpPath = `${this.secretPath}.tmp`;
     try {
-      await fs.promises.writeFile(
-        this.secretPath,
-        JSON.stringify(data, null, 2),
-        'utf-8',
-      );
+      await fs.promises.writeFile(tmpPath, JSON.stringify(data, null, 2), {
+        encoding: 'utf-8',
+        flush: true,
+      });
+      await fs.promises.rename(tmpPath, this.secretPath);
     } catch (error) {
       throw new Error(
         `Failed to save secret: ${error instanceof Error ? error.message : 'Unknown error'}`,
