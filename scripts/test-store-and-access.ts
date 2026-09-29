@@ -35,10 +35,25 @@ interface RecipientEntry {
 }
 
 interface EncryptedPayload {
+  version: 2;
   recipients: RecipientEntry[];
   encryptedData: string;
   iv: string;
   authTag: string;
+}
+
+const KEK_INFO = 'w3pk-mlkem-kek-v2';
+const AES_KW_IV = Buffer.from('A6A6A6A6A6A6A6A6', 'hex');
+
+/**
+ * Wrap the AES key under a KEK derived from the ML-KEM shared secret (v2)
+ */
+function wrapAesKey(sharedSecret: Uint8Array, aesKey: Buffer): Buffer {
+  const kek = Buffer.from(
+    crypto.hkdfSync('sha256', sharedSecret, Buffer.alloc(0), KEK_INFO, 32),
+  );
+  const cipher = crypto.createCipheriv('id-aes256-wrap', kek, AES_KW_IV);
+  return Buffer.concat([cipher.update(aesKey), cipher.final()]);
 }
 
 /**
@@ -74,12 +89,7 @@ async function encryptMultiRecipient(
 
     const [kemCiphertext, sharedSecret] = mlkem.encap(publicKey);
 
-    // XOR-encrypt the AES key with shared secret
-    const kek = sharedSecret.subarray(0, 32);
-    const encryptedAesKey = Buffer.alloc(32);
-    for (let i = 0; i < 32; i++) {
-      encryptedAesKey[i] = aesKey[i] ^ kek[i];
-    }
+    const encryptedAesKey = wrapAesKey(sharedSecret, aesKey);
 
     const combinedCiphertext = Buffer.concat([kemCiphertext, encryptedAesKey]);
 
@@ -90,6 +100,7 @@ async function encryptMultiRecipient(
   }
 
   return {
+    version: 2,
     recipients,
     encryptedData: encrypted.toString('base64'),
     iv: iv.toString('base64'),

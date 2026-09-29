@@ -15,10 +15,20 @@ import { createMlKem1024 } from 'mlkem';
 import * as crypto from 'crypto';
 
 interface EncryptedPayload {
-  ciphertext: string;
+  version: 2;
+  recipients: { publicKey: string; ciphertext: string }[];
   encryptedData: string;
   iv: string;
   authTag: string;
+}
+
+const KEK_INFO = 'w3pk-mlkem-kek-v2';
+const AES_KW_IV = Buffer.from('A6A6A6A6A6A6A6A6', 'hex');
+
+function deriveKek(sharedSecret: Uint8Array): Buffer {
+  return Buffer.from(
+    crypto.hkdfSync('sha256', sharedSecret, Buffer.alloc(0), KEK_INFO, 32),
+  );
 }
 
 /**
@@ -38,24 +48,41 @@ async function encryptForTEE(
     );
   }
 
-  console.log('  📦 Encapsulating with TEE public key...');
-  const [ciphertext, sharedSecret] = mlkem.encap(publicKeyBytes);
-  console.log(`  ✅ Generated shared secret (${sharedSecret.length} bytes)`);
-
-  // Generate random IV
+  // Generate random AES key and IV
+  const aesKey = crypto.randomBytes(32);
   const iv = crypto.randomBytes(12); // 96-bit IV for GCM
 
   // Encrypt data with AES-256-GCM
   console.log('  🔐 Encrypting with AES-256-GCM...');
-  const cipher = crypto.createCipheriv('aes-256-gcm', sharedSecret, iv);
+  const cipher = crypto.createCipheriv('aes-256-gcm', aesKey, iv);
   let encrypted = cipher.update(plaintext, 'utf-8');
   encrypted = Buffer.concat([encrypted, cipher.final()]);
   const authTag = cipher.getAuthTag();
-
   console.log(`  ✅ Encrypted (${encrypted.length} bytes)`);
 
+  console.log('  📦 Encapsulating with TEE public key...');
+  const [kemCiphertext, sharedSecret] = mlkem.encap(publicKeyBytes);
+  console.log(`  ✅ Generated shared secret (${sharedSecret.length} bytes)`);
+
+  // Wrap the AES key with AES-KW under an HKDF-derived KEK
+  console.log('  🔑 Wrapping AES key with AES-KW...');
+  const wrap = crypto.createCipheriv(
+    'id-aes256-wrap',
+    deriveKek(sharedSecret),
+    AES_KW_IV,
+  );
+  const wrappedKey = Buffer.concat([wrap.update(aesKey), wrap.final()]);
+
   return {
-    ciphertext: Buffer.from(ciphertext).toString('base64'),
+    version: 2,
+    recipients: [
+      {
+        publicKey: teePublicKeyBase64,
+        ciphertext: Buffer.concat([kemCiphertext, wrappedKey]).toString(
+          'base64',
+        ),
+      },
+    ],
     encryptedData: encrypted.toString('base64'),
     iv: iv.toString('base64'),
     authTag: authTag.toString('base64'),
@@ -72,26 +99,39 @@ async function decryptPayload(
   const mlkem = await createMlKem1024();
 
   // Decode from base64
-  const ciphertext = Buffer.from(payload.ciphertext, 'base64');
+  const combined = Buffer.from(payload.recipients[0].ciphertext, 'base64');
   const encryptedData = Buffer.from(payload.encryptedData, 'base64');
   const iv = Buffer.from(payload.iv, 'base64');
   const authTag = Buffer.from(payload.authTag, 'base64');
   const privateKey = Buffer.from(privateKeyBase64, 'base64');
 
   // Validate sizes
-  if (ciphertext.length !== 1568) {
+  if (combined.length !== 1568 + 40) {
     throw new Error(
-      `Invalid ML-KEM ciphertext size: ${ciphertext.length} (expected 1568)`,
+      `Invalid combined ciphertext size: ${combined.length} (expected 1608)`,
     );
   }
 
   console.log('  📦 Decapsulating with TEE private key...');
-  const sharedSecret = mlkem.decap(ciphertext, privateKey);
+  const sharedSecret = mlkem.decap(combined.subarray(0, 1568), privateKey);
   console.log(`  ✅ Recovered shared secret (${sharedSecret.length} bytes)`);
+
+  console.log('  🔑 Unwrapping AES key...');
+  const unwrap = crypto.createDecipheriv(
+    'id-aes256-wrap',
+    deriveKek(sharedSecret),
+    AES_KW_IV,
+  );
+  const aesKey = Buffer.concat([
+    unwrap.update(combined.subarray(1568)),
+    unwrap.final(),
+  ]);
 
   // Decrypt data with AES-256-GCM
   console.log('  🔓 Decrypting with AES-256-GCM...');
-  const decipher = crypto.createDecipheriv('aes-256-gcm', sharedSecret, iv);
+  const decipher = crypto.createDecipheriv('aes-256-gcm', aesKey, iv, {
+    authTagLength: 16,
+  });
   decipher.setAuthTag(authTag);
 
   let decrypted = decipher.update(encryptedData);
@@ -158,8 +198,12 @@ async function testMLKEMFlow() {
 
   // Step 7: Show payload sizes
   console.log('📊 Payload sizes:');
+  const recipientCiphertext = Buffer.from(
+    encrypted.recipients[0].ciphertext,
+    'base64',
+  );
   console.log(
-    `  • ML-KEM ciphertext: ${Buffer.from(encrypted.ciphertext, 'base64').length} bytes`,
+    `  • Recipient ciphertext: ${recipientCiphertext.length} bytes (1568 KEM + 40 wrapped key)`,
   );
   console.log(
     `  • AES encrypted data: ${Buffer.from(encrypted.encryptedData, 'base64').length} bytes`,
@@ -169,7 +213,7 @@ async function testMLKEMFlow() {
     `  • Auth tag: ${Buffer.from(encrypted.authTag, 'base64').length} bytes`,
   );
   console.log(
-    `  • Total overhead: ~${Buffer.from(encrypted.ciphertext, 'base64').length + 12 + 16} bytes\n`,
+    `  • Total overhead: ~${recipientCiphertext.length + 12 + 16} bytes\n`,
   );
 
   console.log('🎉 All tests passed!');
