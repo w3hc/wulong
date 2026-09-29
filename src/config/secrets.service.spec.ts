@@ -127,26 +127,29 @@ describe('SecretsService', () => {
       expect(service.get('TEST_SECRET')).toBe('prod-env-value');
     });
 
-    it('should skip KMS and load from TEE environment when ADMIN_MLKEM_PUBLIC_KEY is set', async () => {
+    it('should not skip KMS when ADMIN_MLKEM_PUBLIC_KEY is set', async () => {
       process.env.NODE_ENV = 'production';
       process.env.KMS_URL = 'https://kms.example.com/secrets';
       process.env.ADMIN_MLKEM_PUBLIC_KEY = 'mock-public-key';
-      process.env.TEE_SECRET = 'tee-injected-value';
+
+      jest
+        .spyOn(teePlatformService, 'generateAttestationReport')
+        .mockResolvedValue({
+          platform: 'intel-tdx',
+          report: 'mock-report',
+          measurement: 'mock-measurement',
+          timestamp: '2026-03-17T00:00:00.000Z',
+        });
+      (global.fetch as jest.Mock).mockResolvedValue({
+        ok: true,
+        json: jest.fn().mockResolvedValue({ API_KEY: 'from-kms' }),
+      });
 
       jest.spyOn(service, 'onModuleInit').mockRestore();
       await service.onModuleInit();
 
-      // Should not call KMS
-      expect(global.fetch).not.toHaveBeenCalled();
-      const generateAttestationSpy = jest.spyOn(
-        teePlatformService,
-        'generateAttestationReport',
-      );
-      expect(generateAttestationSpy).not.toHaveBeenCalled();
-
-      // Should load from environment instead
-      expect(service.get('TEE_SECRET')).toBe('tee-injected-value');
-      expect(service.get('ADMIN_MLKEM_PUBLIC_KEY')).toBe('mock-public-key');
+      expect(global.fetch).toHaveBeenCalled();
+      expect(service.get('API_KEY')).toBe('from-kms');
     });
 
     it('should throw error if KMS refuses attestation', async () => {
