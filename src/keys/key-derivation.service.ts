@@ -106,6 +106,8 @@ export class KeyDerivationService implements OnModuleInit {
     seed.fill(0);
 
     const identity = await this.dstack.getKey(IDENTITY_DOMAIN, 'secp256k1');
+    // hexlify leaves an immutable string copy of the key that fill(0) cannot
+    // reach; ethers' SigningKey only takes the key as a hex string
     const signingKey = new SigningKey(hexlify(identity.key));
     identity.key.fill(0);
 
