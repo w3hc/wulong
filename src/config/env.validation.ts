@@ -43,6 +43,10 @@ export class EnvironmentVariables {
   @IsString()
   TLS_ALT_NAMES?: string;
 
+  // Browser origins allowed to call the API, comma-separated; unset allows none
+  @IsString()
+  CORS_ORIGINS?: string;
+
   // Serve plain HTTP behind a TLS-terminating proxy; secrets then leave the enclave in clear
   @IsIn(['true', 'false'])
   ALLOW_TLS_OUTSIDE_ENCLAVE?: string;

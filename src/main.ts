@@ -9,6 +9,7 @@ import { AppModule } from './app.module';
 import { SanitizedLogger } from './logging/sanitized-logger';
 import { TeeExceptionFilter } from './filters/tee-exception.filter';
 import { TeeTlsService } from './tls/tee-tls.service';
+import { configureCors, parseCorsOrigins } from './http/http-config';
 
 async function bootstrap() {
   const isProd = process.env.NODE_ENV === 'production';
@@ -20,11 +21,7 @@ async function bootstrap() {
   // Security headers - protects against common web vulnerabilities
   app.use(helmet());
 
-  // CORS configuration - restrict to trusted origins in production
-  app.enableCors({
-    origin: isProd ? false : '*', // Disable CORS in production by default
-    credentials: true,
-  });
+  configureCors(app, parseCorsOrigins(process.env.CORS_ORIGINS));
 
   // Global validation pipe - validates all incoming requests
   app.useGlobalPipes(
