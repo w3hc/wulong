@@ -23,9 +23,8 @@ import { SiweMessage } from 'siwe';
 interface AttestationResponse {
   platform: string;
   report: string;
-  measurement: string;
+  measurements: { rtmr3: string } | null;
   timestamp: string;
-  publicKey?: string;
   mlkemPublicKey?: string;
 }
 
@@ -213,7 +212,9 @@ async function testMLKEMWithServer() {
     console.log(
       `  ✅ ML-KEM Public Key: ${attestation.mlkemPublicKey.substring(0, 32)}... (${Buffer.from(attestation.mlkemPublicKey, 'base64').length} bytes)`,
     );
-    console.log(`  ⚠️  Measurement: ${attestation.measurement}`);
+    console.log(
+      `  ⚠️  RTMR3: ${attestation.measurements?.rtmr3 ?? 'none (not in a TEE)'}`,
+    );
     console.log(
       `     (In production, VERIFY this matches published source code!)\n`,
     );

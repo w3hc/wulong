@@ -21,6 +21,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `GET /chest/attestation` returns `tlsCertificate`, the leaf certificate served from inside the enclave, and `report_data` commits to it.
 - `pnpm verify:attestation` checks that the certificate of its TLS session is the one bound by the attestation.
 - `pnpm verify:attestation` checks the key binding: it sends a random nonce, recomputes `report_data`, compares it with the quote, and checks the manifest signer and ML-KEM hash.
+- `GET /chest/attestation` returns `measurements` (MRTD, RTMR0–3) and the dstack `eventLog`. RTMR3 identifies the app; [`docs/TEE_SETUP.md`](docs/TEE_SETUP.md#measurements) explains how to reproduce it from the compose file.
+- `pnpm verify:attestation` checks that the returned measurements are the ones in the quote.
 
 ### Fixed
 
@@ -37,6 +39,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - In production, startup now fails if `ADMIN_MLKEM_*`, any `*PRIVATE_KEY`, `*MNEMONIC` or `*SEED` variable, or `DSTACK_SIMULATOR_ENDPOINT` is set, or if keys cannot be derived.
 - Setting `ADMIN_MLKEM_PUBLIC_KEY` no longer skips loading secrets from `KMS_URL`.
 - The attestation's `report_data` was only a timestamp, so anyone between the client and the enclave could replace `mlkemPublicKey` with their own key while serving a genuine quote. It now commits to the ML-KEM and identity public keys, as specified in [`docs/KEY_DERIVATION.md`](docs/KEY_DERIVATION.md#report_data).
+- A deployment outside a TEE started normally in production and served mock attestations; the SEV-SNP, native TDX and Nitro paths were stubs, the Nitro one reporting a made-up document as `aws-nitro`. Only dstack remains, and production refuses to start without `/var/run/dstack.sock`, with `DSTACK_SIMULATOR_ENDPOINT`, or if the first quote fails or does not carry the requested `report_data`.
+- The attestation's `measurement` was read at offset 112 of the quote, which holds MRSIGNERSEAM, not MRTD (at 184).
+- `TeePlatformService` was provided twice, in `AppModule` and `SecretModule`. It now lives in `AttestationModule`.
+- `pnpm audit --prod` reported one high and three moderate findings, from `@phala/dstack-sdk`'s viem and Solana dependencies. The SDK is removed: quotes go through Wulong's own dstack client (`/GetQuote`).
 
 ### Changed
 
@@ -45,6 +51,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Breaking:** the server's ML-KEM key changes, and secrets stored under the old env key can no longer be decrypted by the server. No migration is provided.
 - **Breaking:** requires a dstack ≥ 0.6.0 guest agent (`/v1/GetKey`). Development needs the dstack simulator.
 - **Breaking:** `GET /chest/attestation` returns 503 when the keys have not been derived, instead of a quote without a key. Its `report_data` layout changes, so clients must check the new binding.
+- **Breaking:** `GET /attestation` is removed; use `GET /chest/attestation`, which binds the keys.
+- **Breaking:** `GET /chest/attestation` replaces `measurement` with `measurements` and `eventLog`, drops `publicKey`, and `platform` is `intel-tdx`, or `none` outside production without dstack.
 
 - Bump NestJS to 12, including `@nestjs/config` 12 and `@nestjs/swagger` 12.
 - Bump TypeScript to 6.0 and `@types/node` to 26. TypeScript 7 is held back until `typescript-eslint`, `ts-jest` and `@nestjs/swagger` support it.

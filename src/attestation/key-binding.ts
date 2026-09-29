@@ -6,9 +6,7 @@ import {
   SignedKeyManifest,
 } from '../keys/key-derivation.service';
 import { buildReportData } from './report-data';
-
-/** Offset of REPORTDATA in a TDX v4 quote: 48-byte header + 520 into the body. */
-export const TDX_QUOTE_REPORT_DATA_OFFSET = 568;
+import { TDX_QUOTE_REPORT_DATA_OFFSET } from './tdx-quote';
 
 /** The fields of `GET /chest/attestation` that bind the keys. */
 export interface KeyBindingEvidence {

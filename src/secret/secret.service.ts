@@ -231,9 +231,9 @@ export class SecretService {
     return {
       platform: attestation.platform,
       report: attestation.report,
-      measurement: attestation.measurement,
+      measurements: attestation.measurements,
+      eventLog: attestation.eventLog,
       timestamp: attestation.timestamp,
-      publicKey: attestation.publicKey,
       mlkemPublicKey: Buffer.from(mlkemPublicKey).toString('base64'),
       identityPublicKey: `0x${Buffer.from(identityPublicKey).toString('hex')}`,
       tlsCertificate: tlsCertificateDer

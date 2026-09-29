@@ -4,6 +4,6 @@ import { KeyDerivationService } from './key-derivation.service';
 
 @Module({
   providers: [DstackV1Client, KeyDerivationService],
-  exports: [KeyDerivationService],
+  exports: [DstackV1Client, KeyDerivationService],
 })
 export class KeysModule {}

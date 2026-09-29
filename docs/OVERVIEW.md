@@ -15,12 +15,9 @@ Wulong leverages hardware-based isolation provided by modern CPU security featur
 - **Remote attestation**: Clients receive cryptographic proof of the exact code executing
 - **Sealed secrets**: Cryptographic keys and sensitive configuration are only released after attestation verification
 
-### Supported TEE Platforms
+### Supported TEE Platform
 
-- **AMD SEV-SNP**: Secure Encrypted Virtualization with memory integrity
-- **Intel TDX**: Trust Domain Extensions for VM-level isolation
-- **AWS Nitro**: Amazon's proprietary enclave technology
-- **Phala Network**: Decentralized TEE infrastructure on Intel TDX
+- **dstack on Intel TDX**, such as [Phala Cloud](https://cloud.phala.network/). Wulong refuses to start in production without the dstack guest agent. See [TEE_SETUP.md](TEE_SETUP.md).
 
 ### Architecture Philosophy
 
@@ -59,7 +56,7 @@ Wulong follows a **zero-trust operator model**. Traditional API security relies 
 ### Attestation & Verification
 The `/chest/attestation` endpoint exposes cryptographic evidence of the running code. Clients verify this evidence against known measurements before transmitting sensitive data. This creates a trustless verification model where code identity is proven mathematically rather than asserted. The attestation proves that:
 
-1. **Code Integrity**: The exact code running in the TEE (via measurement/hash)
+1. **Code Integrity**: The app running in the TEE (RTMR3 in the TDX quote, which extends the compose hash)
 2. **TEE Authenticity**: The service is actually running in a genuine TEE
 3. **No Privileged Access**: Even the operator cannot access user secrets
 
@@ -141,7 +138,7 @@ Sign-In with Ethereum (SIWE) provides decentralized authentication without tradi
 
 **Security Layer**: Enforces confidentiality guarantees through sanitized logging, header-based authentication, and KMS integration
 
-**Hardware Layer**: Platform-specific TEE implementations (SEV-SNP, TDX, Nitro) provide memory encryption and attestation
+**Hardware Layer**: Intel TDX, managed by dstack, provides memory encryption and attestation
 
 ## Use Cases
 
@@ -171,7 +168,7 @@ This overview covers architectural concepts and security properties. For practic
 - **Runtime**: Node.js 24+ with NestJS 12
 - **Language**: TypeScript 6
 - **Package Manager**: pnpm
-- **TEE Platforms**: AMD SEV-SNP, Intel TDX, AWS Nitro, Phala Network
+- **TEE Platform**: dstack on Intel TDX (Phala Cloud)
 - **Authentication**: SIWE (Sign-In with Ethereum)
 - **API Documentation**: Swagger/OpenAPI
 - **License**: GPL v3

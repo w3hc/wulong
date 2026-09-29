@@ -5,8 +5,7 @@ import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { SecretsService } from './config/secrets.service';
-import { AttestationController } from './attestation/attestation.controller';
-import { TeePlatformService } from './attestation/tee-platform.service';
+import { AttestationModule } from './attestation/attestation.module';
 import { HealthController } from './health/health.controller';
 import { validateEnvironment } from './config/env.validation';
 import { SecretModule } from './secret/secret.module';
@@ -30,17 +29,17 @@ import { TlsModule } from './tls/tls.module';
         },
       ],
     }),
+    AttestationModule,
     AuthModule,
     SecretModule,
     TlsModule,
   ],
-  controllers: [AppController, AttestationController, HealthController],
+  controllers: [AppController, HealthController],
   providers: [
     AppService,
     SecretsService,
-    TeePlatformService,
     { provide: APP_GUARD, useClass: ThrottlerGuard },
   ],
-  exports: [SecretsService, TeePlatformService],
+  exports: [SecretsService],
 })
 export class AppModule {}

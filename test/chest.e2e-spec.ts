@@ -669,30 +669,24 @@ describe('Chest Endpoints (e2e)', () => {
         .expect((res) => {
           expect(res.body).toHaveProperty('platform');
           expect(res.body).toHaveProperty('report');
-          expect(res.body).toHaveProperty('measurement');
+          expect(res.body).toHaveProperty('measurements');
+          expect(res.body).toHaveProperty('eventLog');
           expect(res.body).toHaveProperty('timestamp');
-
-          // Verify platform is one of the expected types
-          expect([
-            'amd-sev-snp',
-            'intel-tdx',
-            'aws-nitro',
-            'phala',
-            'none',
-          ]).toContain((res.body as { platform: string }).platform);
+          expect(['intel-tdx', 'none']).toContain(
+            (res.body as { platform: string }).platform,
+          );
         });
     });
 
-    it('should return mock attestation in non-TEE environment', () => {
+    it('should return a placeholder without measurements outside a TEE', () => {
       return request(app.getHttpServer())
         .get('/chest/attestation')
         .expect(200)
         .expect((res) => {
-          // In test environment, we expect mock attestation
           expect((res.body as { platform: string }).platform).toBe('none');
-          expect((res.body as { measurement: string }).measurement).toContain(
-            'MOCK',
-          );
+          expect(
+            (res.body as { measurements: unknown }).measurements,
+          ).toBeNull();
         });
     });
 

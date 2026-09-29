@@ -121,7 +121,7 @@ const plaintext2 = await fetch('/chest/access/slot123', {
 | **Harvest-Now-Decrypt-Later** | ✅ Data encrypted with ML-KEM at rest |
 | **Man-in-the-Middle** | ✅ TEE attestation verification required |
 | **Admin Access** | ✅ Private key sealed in TEE hardware |
-| **Code Tampering** | ✅ Attestation measurement verifies code integrity |
+| **Code Tampering** | ✅ RTMR3 in the quote identifies the app's compose file |
 | **Replay Attacks** | ✅ SIWE nonces prevent replay |
 | **Side-Channel** | ⚠️ TEE provides isolation (see [SIDE_CHANNEL_ATTACKS.md](SIDE_CHANNEL_ATTACKS.md)) |
 
@@ -153,13 +153,16 @@ Get TEE attestation with server's ML-KEM public key.
 **Response:**
 ```json
 {
-  "platform": "phala",
-  "report": "base64_tee_signature...",
-  "measurement": "sha256_code_hash...",
+  "platform": "intel-tdx",
+  "report": "base64_tdx_quote...",
+  "measurements": { "mrtd": "...", "rtmr0": "...", "rtmr1": "...", "rtmr2": "...", "rtmr3": "..." },
+  "eventLog": "[...]",
   "timestamp": "2026-03-22T10:30:00.000Z",
   "mlkemPublicKey": "ZLVMNpXCmEp7vhcylKzGXcx8...",
-  "publicKey": "0xServerAddress..."
+  "reportData": "0x..."
 }
+
+The full response is in [API_REFERENCE.md](API_REFERENCE.md#get-chestattestation).
 ```
 
 **CRITICAL**: Clients MUST verify attestation before trusting `mlkemPublicKey`!
@@ -349,45 +352,7 @@ const [publicKey, secretKey] = mlkem.deriveKeyPair(seed);
 
 ### Attestation Response
 
-```typescript
-async getAttestation(): Promise<AttestationResponseDto> {
-  const attestation = await this.teePlatformService.generateAttestationReport();
-
-  return {
-    platform: attestation.platform,      // 'phala', 'amd-sev-snp', etc.
-    report: attestation.report,          // TEE signature
-    measurement: attestation.measurement, // Code hash
-    timestamp: attestation.timestamp,
-    mlkemPublicKey: this.getPublicKey(), // For client encryption
-  };
-}
-```
-
-### Phala Network Deployment
-
-```typescript
-// Example Phala deployment configuration
-import { PinkEnvironment } from '@phala/pink-env';
-
-// TEE generates and seals ML-KEM keys
-const keys = await generateAndSealMLKemKeys();
-
-// Export public key in attestation
-export function getAttestation() {
-  return {
-    platform: 'phala',
-    report: PinkEnvironment.attestation(),
-    measurement: PinkEnvironment.codeHash(),
-    mlkemPublicKey: keys.publicKey,
-  };
-}
-
-// Decrypt secrets in TEE
-export function decryptSecret(encryptedPayload) {
-  const privateKey = unsealPrivateKey(); // From TEE storage
-  return mlkem.decryptMultiRecipient(encryptedPayload, privateKey);
-}
-```
+`SecretService.getAttestation` builds `report_data` from the public keys, the TLS certificate and the client nonce, and asks `TeePlatformService` for a TDX quote over it through the dstack guest agent. The response carries the quote, its `measurements` (MRTD, RTMR0–3), the dstack `eventLog`, and the keys. See [TEE_SETUP.md](TEE_SETUP.md#how-attestation-works).
 
 ## Testing
 
@@ -651,7 +616,8 @@ Expected response:
 {
   "platform": "none",
   "report": "...",
-  "measurement": "...",
+  "measurements": null,
+  "eventLog": null,
   "timestamp": "2026-03-22T...",
   "mlkemPublicKey": "ZLVMNpXCmEp7vhcylKzGXcx8wVEcaQKI..."
 }
@@ -809,19 +775,19 @@ When deployed on Phala, the attestation will include:
 
 ```json
 {
-  "platform": "phala",
-  "report": "base64_tee_signature_from_phala...",
-  "measurement": "sha256_hash_of_code...",
+  "platform": "intel-tdx",
+  "report": "base64_tdx_quote...",
+  "measurements": { "mrtd": "...", "rtmr0": "...", "rtmr1": "...", "rtmr2": "...", "rtmr3": "..." },
+  "eventLog": "[...]",
   "timestamp": "2026-03-22T...",
-  "mlkemPublicKey": "server_public_key_from_tee...",
-  "publicKey": "0xPhalaContractAddress..."
+  "mlkemPublicKey": "server_public_key_from_tee..."
 }
 ```
 
 **CRITICAL:** Clients MUST verify:
-1. ✅ `measurement` matches published source code hash
-2. ✅ `report` signature is valid (from Phala Network)
-3. ✅ `platform` is "phala"
+1. ✅ `report` is a TDX quote with a valid signature (dcap-qvl, dstack-verifier or Phala's verifier)
+2. ✅ `measurements.rtmr3` matches the value reproduced from the compose file ([TEE_SETUP.md](TEE_SETUP.md#measurements))
+3. ✅ `reportData` commits to `mlkemPublicKey` and the client nonce ([KEY_DERIVATION.md](KEY_DERIVATION.md#verification))
 
 #### Step 5: Client-Side Verification
 
@@ -851,13 +817,13 @@ The complete production flow on Phala:
 ┌─────────────────────────────────────────────────────────────┐
 │ 1. Client gets attestation from Phala TEE                   │
 │    GET https://your-app.phala.network/chest/attestation     │
-│    Response: { platform: "phala", mlkemPublicKey, ... }     │
+│    Response: { platform: "intel-tdx", mlkemPublicKey, ... } │
 └─────────────────────────────────────────────────────────────┘
                            ↓
 ┌─────────────────────────────────────────────────────────────┐
 │ 2. Client verifies attestation                              │
-│    ✅ Check measurement matches published source code        │
-│    ✅ Verify Phala signature on report                       │
+│    ✅ Check RTMR3 matches the published compose file         │
+│    ✅ Verify the TDX quote signature                         │
 │    ✅ Confirm TEE platform is genuine                        │
 │    ❌ REJECT if verification fails                           │
 └─────────────────────────────────────────────────────────────┘
@@ -916,7 +882,7 @@ The complete production flow on Phala:
 - [ ] Verify complete store+access flow works
 - [ ] Test SIWE authentication with real wallet
 - [ ] Verify attestation signature (Intel TDX-specific)
-- [ ] Verify measurement matches published code
+- [ ] Verify RTMR3 matches the value reproduced from the compose file
 - [ ] Test with w3pk client integration
 - [ ] Test with multiple concurrent clients
 - [ ] Monitor instance costs and performance
@@ -944,8 +910,8 @@ The complete production flow on Phala:
 
 **CRITICAL Client Responsibilities:**
 1. **ALWAYS verify attestation** before encrypting
-2. **Check measurement** matches published source code hash
-3. **Verify signature** from Phala Network
+2. **Check RTMR3** matches the value reproduced from the compose file
+3. **Verify the TDX quote signature**
 4. **Reject invalid** attestations (do not proceed)
 
 ### Troubleshooting
@@ -1059,7 +1025,7 @@ A: Yes. ML-KEM uses standard base64 encoding and can be integrated into existing
 A: Your data is already protected. ML-KEM provides quantum resistance today.
 
 **Q: How do I verify TEE attestation?**
-A: Compare the `measurement` field with the published source code hash. Verify the TEE platform signature. (Implementation guide coming soon in w3pk.)
+A: Verify the TDX quote signature, check that `reportData` commits to the keys and your nonce, and compare `measurements.rtmr3` with the value reproduced from the compose file. See [TEE_SETUP.md](TEE_SETUP.md#measurements).
 
 **Q: Can the server administrator access my secrets?**
 A: In TEE deployment: No. The private key is sealed in hardware and cannot be extracted.
@@ -1132,7 +1098,7 @@ A: Change the derivation domain (`wulong/mlkem-1024/v1` to `/v2`) in a release t
 - [ ] Key rotation automation
 - [ ] Multi-signature support
 - [ ] Threshold encryption
-- [ ] Integration with other TEE platforms (AWS Nitro, Intel TDX)
+- [ ] Integration with other TEE platforms (only dstack on Intel TDX is supported)
 
 ## References
 
@@ -1146,7 +1112,7 @@ A: Change the derivation domain (`wulong/mlkem-1024/v1` to `/v2`) in a release t
 
 - [mlkem](https://www.npmjs.com/package/mlkem) - WASM implementation used in wulong
 - [w3pk](https://github.com/w3hc/w3pk) - Client-side integration
-- [@phala/dstack-sdk](https://www.npmjs.com/package/@phala/dstack-sdk) - Phala Network TEE
+- [dstack](https://github.com/Dstack-TEE/dstack) - TEE guest OS and guest agent, reached through `src/keys/dstack-v1.client.ts`
 
 ### Documentation
 

@@ -63,60 +63,8 @@ describe('Application (e2e)', () => {
   });
 
   describe('Attestation Endpoints (e2e)', () => {
-    it('/attestation (GET) - should return attestation report', () => {
-      return request(app.getHttpServer())
-        .get('/attestation')
-        .expect(200)
-        .expect((res) => {
-          expect(res.body).toHaveProperty('platform');
-          expect(res.body).toHaveProperty('report');
-          expect(res.body).toHaveProperty('measurement');
-          expect(res.body).toHaveProperty('timestamp');
-          expect(res.body).toHaveProperty('instructions');
-
-          // Verify platform is one of the expected values
-          expect(['amd-sev-snp', 'intel-tdx', 'aws-nitro', 'none']).toContain(
-            (res.body as { platform: string }).platform,
-          );
-
-          // Verify report is base64 encoded
-          expect((res.body as { report: string }).report).toMatch(
-            /^[A-Za-z0-9+/]+=*$/,
-          );
-
-          // Verify timestamp format
-          expect((res.body as { timestamp: string }).timestamp).toMatch(
-            /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/,
-          );
-        });
-    });
-
-    it('/attestation (GET) - should include appropriate instructions for platform', () => {
-      return request(app.getHttpServer())
-        .get('/attestation')
-        .expect(200)
-        .expect((res) => {
-          const { platform, instructions } = res.body as {
-            platform: string;
-            instructions: string;
-          };
-
-          switch (platform) {
-            case 'amd-sev-snp':
-              expect(instructions).toContain('SEV-SNP');
-              break;
-            case 'intel-tdx':
-              expect(instructions).toContain('TDX');
-              break;
-            case 'aws-nitro':
-              expect(instructions).toContain('Nitro');
-              break;
-            case 'none':
-              expect(instructions).toContain('WARNING');
-              expect(instructions).toContain('MOCK');
-              break;
-          }
-        });
+    it('/attestation (GET) - is gone: attestations come from /chest/attestation', () => {
+      return request(app.getHttpServer()).get('/attestation').expect(404);
     });
   });
 
@@ -142,7 +90,7 @@ describe('Application (e2e)', () => {
 
     it('should return 404 for non-existent nested endpoints', () => {
       return request(app.getHttpServer())
-        .get('/attestation/non-existent')
+        .get('/health/non-existent')
         .expect(404);
     });
   });
@@ -153,7 +101,7 @@ describe('Application (e2e)', () => {
     });
 
     it('should reject PUT to GET-only endpoints', () => {
-      return request(app.getHttpServer()).put('/attestation').expect(404);
+      return request(app.getHttpServer()).put('/health').expect(404);
     });
 
     it('should reject DELETE to GET-only endpoints', () => {
@@ -168,13 +116,6 @@ describe('Application (e2e)', () => {
         .expect(200)
         .expect('Content-Type', /json/);
     });
-
-    it('should return JSON content type for attestation endpoint', () => {
-      return request(app.getHttpServer())
-        .get('/attestation')
-        .expect(200)
-        .expect('Content-Type', /json/);
-    });
   });
 
   describe('Response Time (e2e)', () => {
@@ -185,15 +126,6 @@ describe('Application (e2e)', () => {
 
       // Health check should respond in less than 100ms
       expect(duration).toBeLessThan(100);
-    });
-
-    it('attestation endpoint should respond in reasonable time', async () => {
-      const start = Date.now();
-      await request(app.getHttpServer()).get('/attestation').expect(200);
-      const duration = Date.now() - start;
-
-      // Attestation should respond in less than 1 second
-      expect(duration).toBeLessThan(1000);
     });
   });
 
@@ -207,19 +139,6 @@ describe('Application (e2e)', () => {
 
       responses.forEach((res) => {
         expect((res.body as { status: string }).status).toBe('ok');
-      });
-    });
-
-    it('should handle multiple concurrent attestation requests', async () => {
-      const requests = Array.from({ length: 3 }, () =>
-        request(app.getHttpServer()).get('/attestation').expect(200),
-      );
-
-      const responses = await Promise.all(requests);
-
-      responses.forEach((res) => {
-        expect(res.body).toHaveProperty('platform');
-        expect(res.body).toHaveProperty('report');
       });
     });
   });

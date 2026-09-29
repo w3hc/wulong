@@ -685,7 +685,14 @@ describe('SecretService', () => {
     const mockAttestation = {
       platform: 'intel-tdx' as const,
       report: 'tdx-quote-base64',
-      measurement: 'def456measurement',
+      measurements: {
+        mrtd: 'aa',
+        rtmr0: 'bb',
+        rtmr1: 'cc',
+        rtmr2: 'dd',
+        rtmr3: 'ee',
+      },
+      eventLog: '[]',
       timestamp: '2026-03-18T10:35:00.000Z',
     };
 
@@ -716,7 +723,6 @@ describe('SecretService', () => {
       ).toHaveBeenCalledWith(expected);
       expect(result).toEqual({
         ...mockAttestation,
-        publicKey: undefined,
         mlkemPublicKey: Buffer.from(mlkemPublicKey).toString('base64'),
         identityPublicKey: `0x${Buffer.from(identityPublicKey).toString('hex')}`,
         tlsCertificate: undefined,
