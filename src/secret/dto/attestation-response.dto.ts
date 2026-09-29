@@ -1,38 +1,50 @@
 import type { SignedKeyManifest } from '../../keys/key-derivation.service';
+import type { TdxMeasurements } from '../../attestation/tdx-quote';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class AttestationResponseDto {
   @ApiProperty({
-    description: 'TEE platform type',
-    enum: ['amd-sev-snp', 'intel-tdx', 'aws-nitro', 'phala', 'none'],
-    example: 'amd-sev-snp',
+    description:
+      'intel-tdx on dstack; none outside production when no dstack guest agent is reachable, in which case report is a placeholder',
+    enum: ['intel-tdx', 'none'],
+    example: 'intel-tdx',
   })
   platform: string;
 
   @ApiProperty({
-    description: 'Base64-encoded attestation report/quote from TEE',
-    example: 'eyJhdHRlc3RhdGlvbiI6ICIuLi4ifQ==',
+    description: 'Base64 TDX v4 quote from the dstack guest agent',
+    example: 'BAACAIEAAAAAAAAAk5pyM/ecTKmUCg2zlX8GB...',
   })
   report: string;
 
   @ApiProperty({
-    description: 'Measurement/hash of the code running in the TEE',
-    example: 'a1b2c3d4e5f6...',
+    description:
+      'Hex MRTD and RTMR0-3 read from the quote. RTMR3 holds the app compose hash and identifies the app; ' +
+      'MRTD and RTMR0-2 identify the dstack OS image. Null when platform is none. See docs/TEE_SETUP.md.',
+    nullable: true,
+    example: {
+      mrtd: 'c68518a0...',
+      rtmr0: '85e0855a...',
+      rtmr1: '9b43f9f3...',
+      rtmr2: '7cc2dadd...',
+      rtmr3: 'd4e5f6a7...',
+    },
   })
-  measurement: string;
+  measurements: TdxMeasurements | null;
+
+  @ApiProperty({
+    description:
+      'dstack event log (JSON string) that replays RTMR0-3, including the compose-hash event in RTMR3. Null when platform is none.',
+    nullable: true,
+    type: String,
+  })
+  eventLog: string | null;
 
   @ApiProperty({
     description: 'Timestamp when the attestation was generated',
     example: '2026-03-18T10:30:00.000Z',
   })
   timestamp: string;
-
-  @ApiProperty({
-    description: 'Public key of the TEE (if applicable)',
-    required: false,
-    example: '0x1234567890abcdef...',
-  })
-  publicKey?: string;
 
   @ApiProperty({
     description:

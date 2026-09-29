@@ -75,9 +75,10 @@ describe('SecretsService', () => {
       process.env.KMS_URL = 'https://kms.example.com/secrets';
 
       const mockAttestationReport = {
-        platform: 'amd-sev-snp' as const,
+        platform: 'intel-tdx' as const,
         report: 'mock-attestation-report',
-        measurement: 'mock-measurement',
+        measurements: null,
+        eventLog: null,
         timestamp: '2026-03-17T00:00:00.000Z',
       };
 
@@ -137,7 +138,8 @@ describe('SecretsService', () => {
         .mockResolvedValue({
           platform: 'intel-tdx',
           report: 'mock-report',
-          measurement: 'mock-measurement',
+          measurements: null,
+          eventLog: null,
           timestamp: '2026-03-17T00:00:00.000Z',
         });
       (global.fetch as jest.Mock).mockResolvedValue({
@@ -161,7 +163,8 @@ describe('SecretsService', () => {
         .mockResolvedValue({
           platform: 'none',
           report: 'mock-report',
-          measurement: 'mock',
+          measurements: null,
+          eventLog: null,
           timestamp: '2026-03-17T00:00:00.000Z',
         });
 
