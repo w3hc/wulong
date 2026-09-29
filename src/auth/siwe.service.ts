@@ -14,6 +14,20 @@ export class SiweService {
   // Nonce expires after 5 minutes
   private readonly NONCE_TTL = 5 * 60 * 1000;
 
+  // Tolerated clock drift between the client and the server
+  private readonly CLOCK_SKEW = 30 * 1000;
+
+  // Domain SIWE messages must be signed for
+  private readonly domain: string;
+
+  constructor() {
+    const domain = process.env.SIWE_DOMAIN;
+    if (!domain && process.env.NODE_ENV === 'production') {
+      throw new Error('SIWE_DOMAIN must be set in production');
+    }
+    this.domain = domain || 'localhost';
+  }
+
   /**
    * Generate a cryptographically secure random nonce
    * Nonces are stored in-memory only (no persistence)
@@ -43,26 +57,37 @@ export class SiweService {
     try {
       const siweMessage = new SiweMessage(message);
 
-      // Verify the signature matches the message
-      const fields = await siweMessage.verify({ signature });
-
-      // Check if nonce exists and is not expired
       const nonceEntry = this.nonces.get(siweMessage.nonce);
       if (!nonceEntry) {
         return null; // Nonce not found or already used
       }
 
-      // Check if nonce is expired
-      const age = Date.now() - nonceEntry.createdAt;
-      if (age > this.NONCE_TTL) {
-        this.nonces.delete(siweMessage.nonce);
+      // Single-use nonce: consumed by any verification attempt
+      this.nonces.delete(siweMessage.nonce);
+
+      const now = Date.now();
+      if (now - nonceEntry.createdAt > this.NONCE_TTL) {
         return null; // Nonce expired
       }
 
-      // Single-use nonce: delete after successful verification
-      this.nonces.delete(siweMessage.nonce);
+      // Issued At must fall between nonce creation and now
+      const issuedAt = Date.parse(siweMessage.issuedAt ?? '');
+      if (
+        Number.isNaN(issuedAt) ||
+        issuedAt < nonceEntry.createdAt - this.CLOCK_SKEW ||
+        issuedAt > now + this.CLOCK_SKEW
+      ) {
+        return null;
+      }
 
-      // Return the verified Ethereum address
+      // Enforces signature, domain, nonce, Expiration Time and Not Before
+      const fields = await siweMessage.verify({
+        signature,
+        domain: this.domain,
+        nonce: nonceEntry.nonce,
+        time: new Date(now).toISOString(),
+      });
+
       return fields.data.address;
     } catch {
       // Verification failed - don't log the error details in production

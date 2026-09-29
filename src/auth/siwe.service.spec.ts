@@ -164,12 +164,105 @@ describe('SiweService', () => {
       expect(result).toBeNull();
     });
 
+    const signed = async (overrides: Partial<SiweMessage>) => {
+      const message = new SiweMessage({
+        domain: 'localhost',
+        address: wallet.address,
+        uri: 'https://localhost:3000',
+        version: '1',
+        chainId: 1,
+        nonce: service.generateNonce(),
+        issuedAt: new Date().toISOString(),
+        ...overrides,
+      }).prepareMessage();
+      return { message, signature: await wallet.signMessage(message) };
+    };
+
+    it('should reject a message signed for another domain', async () => {
+      const { message, signature } = await signed({ domain: 'evil.example' });
+      expect(await service.verifySignature(message, signature)).toBeNull();
+    });
+
+    it('should reject a message past its Expiration Time', async () => {
+      const { message, signature } = await signed({
+        expirationTime: new Date(Date.now() - 1000).toISOString(),
+      });
+      expect(await service.verifySignature(message, signature)).toBeNull();
+    });
+
+    it('should reject a message before its Not Before', async () => {
+      const { message, signature } = await signed({
+        notBefore: new Date(Date.now() + 60 * 1000).toISOString(),
+      });
+      expect(await service.verifySignature(message, signature)).toBeNull();
+    });
+
+    it('should reject an Issued At in the future', async () => {
+      const { message, signature } = await signed({
+        issuedAt: new Date(Date.now() + 60 * 1000).toISOString(),
+      });
+      expect(await service.verifySignature(message, signature)).toBeNull();
+    });
+
+    it('should reject an Issued At older than the nonce', async () => {
+      const { message, signature } = await signed({
+        issuedAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+      });
+      expect(await service.verifySignature(message, signature)).toBeNull();
+    });
+
+    it('should consume the nonce on a failed attempt', async () => {
+      const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation();
+      const { message, signature } = await signed({});
+      const wrongSignature = await new Wallet(
+        '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d',
+      ).signMessage(message);
+
+      expect(await service.verifySignature(message, wrongSignature)).toBeNull();
+      expect(await service.verifySignature(message, signature)).toBeNull();
+      consoleErrorSpy.mockRestore();
+    });
+
     it('should return null for malformed message', async () => {
       const result = await service.verifySignature(
         'not a valid SIWE message',
         '0x1234',
       );
       expect(result).toBeNull();
+    });
+  });
+
+  describe('domain', () => {
+    const env = { ...process.env };
+
+    afterEach(() => {
+      process.env = { ...env };
+    });
+
+    it('should throw in production when SIWE_DOMAIN is unset', () => {
+      process.env.NODE_ENV = 'production';
+      delete process.env.SIWE_DOMAIN;
+      expect(() => new SiweService()).toThrow('SIWE_DOMAIN');
+    });
+
+    it('should accept messages for SIWE_DOMAIN', async () => {
+      process.env.SIWE_DOMAIN = 'wulong.example';
+      const custom = new SiweService();
+      const wallet = Wallet.createRandom();
+      const message = new SiweMessage({
+        domain: 'wulong.example',
+        address: wallet.address,
+        uri: 'https://wulong.example',
+        version: '1',
+        chainId: 1,
+        nonce: custom.generateNonce(),
+        issuedAt: new Date().toISOString(),
+      }).prepareMessage();
+      const signature = await wallet.signMessage(message);
+
+      expect(await custom.verifySignature(message, signature)).toBe(
+        wallet.address,
+      );
     });
   });
 
