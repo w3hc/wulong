@@ -71,10 +71,15 @@ Wulong implements **multi-recipient ML-KEM encryption**, allowing multiple parti
 2. Client encrypts data with K using AES-256-GCM
 3. For each recipient (client, server, etc.):
    a. ML-KEM encapsulate → shared secret (SS)
-   b. XOR-encrypt K with SS → encrypted_key
-   c. Store: recipient_entry = {publicKey, ciphertext + encrypted_key}
-4. Final payload = {recipients[], encryptedData, iv, authTag}
+   b. KEK = HKDF-SHA256(SS, salt = empty, info = "w3pk-mlkem-kek-v2")
+   c. AES-KW wrap K with KEK → wrapped_key (40 bytes)
+   d. Store: recipient_entry = {publicKey, ciphertext + wrapped_key}
+4. Final payload = {version: 2, recipients[], encryptedData, iv, authTag}
 ```
+
+The wrap is [AES-KW](https://datatracker.ietf.org/doc/html/rfc3394), so a tampered `wrapped_key` fails at unwrap, before the data is touched. The IV must be 12 bytes and the auth tag 16 bytes.
+
+Payloads without a `version` field are legacy v1: K was XOR-ed with the raw shared secret (32 bytes, no integrity check). The server still decrypts them so secrets stored before v2 remain readable; clients no longer produce them.
 
 ### Benefits
 
@@ -111,6 +116,7 @@ const plaintext2 = await fetch('/chest/access/slot123', {
 | **Key Encapsulation** | ML-KEM-1024 | NIST Level 5 | 256-bit |
 | **Symmetric Encryption** | AES-256-GCM | 256-bit classical | 128-bit quantum |
 | **Key Derivation** | HKDF-SHA256 | 256-bit | 128-bit |
+| **Key Wrapping** | AES-KW (RFC 3394) | 256-bit classical | 128-bit quantum |
 | **Authentication** | SIWE | Ethereum addresses | N/A |
 
 ### Attack Resistance
@@ -229,14 +235,8 @@ class MlKemEncryptionService {
   // Check if encryption is available
   isAvailable(): boolean;
 
-  // Decrypt multi-recipient payload
+  // Decrypt multi-recipient payload (v2, or legacy v1 without a version)
   decryptMultiRecipient(payload: MultiRecipientEncryptedPayload): string;
-
-  // Legacy single-recipient decryption (deprecated)
-  decrypt(payload: EncryptedPayload): string;
-
-  // For testing only (client should encrypt)
-  encrypt(plaintext: string): EncryptedPayload;
 }
 ```
 
@@ -245,10 +245,11 @@ class MlKemEncryptionService {
 ```typescript
 interface RecipientEntry {
   publicKey: string;  // Base64 ML-KEM-1024 public key (1568 bytes)
-  ciphertext: string; // Base64: KEM ciphertext (1568) + encrypted AES key (32)
+  ciphertext: string; // Base64: KEM ciphertext (1568) + wrapped AES key (v2: 40, v1: 32)
 }
 
 interface MultiRecipientEncryptedPayload {
+  version?: 2;                   // Absent on legacy v1 payloads
   recipients: RecipientEntry[];  // Array of recipients
   encryptedData: string;         // Base64 AES-256-GCM encrypted data
   iv: string;                    // Base64 IV (12 bytes)
