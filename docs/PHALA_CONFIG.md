@@ -82,6 +82,8 @@ services:
 - The `pull_policy: always` ensures Phala pulls the latest image on every deployment
 - The `/var/run/dstack.sock` volume mount is **required** for TEE attestation to work - without it, your app will run in mock mode
 
+> **Warning**: passing `ADMIN_MLKEM_PRIVATE_KEY` through env means whoever generated it, or can read the deployment env, can decrypt every stored secret. This is being replaced by keys derived inside the enclave; see [KEY_DERIVATION.md](./KEY_DERIVATION.md).
+
 ### .env.prod
 
 Create a local file with your production secrets (used during deployment):
