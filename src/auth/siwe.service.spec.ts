@@ -358,4 +358,37 @@ describe('SiweService', () => {
       expect(nonces.has(nonce2)).toBe(true);
     });
   });
+
+  describe('nonce cap', () => {
+    const fill = (createdAt: number) => {
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+      const nonces = (service as any).nonces as Map<
+        string,
+        { nonce: string; address: string; createdAt: number }
+      >;
+      for (let i = 0; i < 10_000; i++) {
+        nonces.set(`n${i}`, { nonce: `n${i}`, address: ADDRESS, createdAt });
+      }
+      return nonces;
+    };
+
+    it('should reject new nonces once the store is full', () => {
+      const nonces = fill(Date.now());
+
+      expect(() => service.generateNonce(ADDRESS)).toThrow(
+        'Too many pending nonces',
+      );
+      expect(nonces.size).toBe(10_000);
+      expect(nonces.has('n0')).toBe(true);
+    });
+
+    it('should accept new nonces once pending ones expire', () => {
+      const nonces = fill(Date.now() - 6 * 60 * 1000);
+
+      const nonce = service.generateNonce(ADDRESS);
+
+      expect(nonces.size).toBe(1);
+      expect(nonces.has(nonce)).toBe(true);
+    });
+  });
 });

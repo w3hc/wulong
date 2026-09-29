@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
 import { SiweMessage, generateNonce } from 'siwe';
 
 interface NonceEntry {
@@ -14,6 +14,9 @@ export class SiweService {
 
   // Nonce expires after 5 minutes
   private readonly NONCE_TTL = 5 * 60 * 1000;
+
+  // Upper bound on pending nonces, so the store cannot exhaust TEE memory
+  private readonly MAX_NONCES = 10_000;
 
   // Tolerated clock drift between the client and the server
   private readonly CLOCK_SKEW = 30 * 1000;
@@ -40,9 +43,19 @@ export class SiweService {
   /**
    * Generate a cryptographically secure random nonce
    * bound to the address that will sign with it.
-   * Nonces are stored in-memory only (no persistence)
+   * Nonces are stored in-memory only (no persistence).
+   * Once MAX_NONCES are pending, new requests are rejected
+   * rather than evicting live nonces.
    */
   generateNonce(address: string): string {
+    this.cleanExpiredNonces();
+    if (this.nonces.size >= this.MAX_NONCES) {
+      throw new HttpException(
+        'Too many pending nonces',
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+
     const nonce = generateNonce();
 
     this.nonces.set(nonce, {
@@ -50,9 +63,6 @@ export class SiweService {
       address: address.toLowerCase(),
       createdAt: Date.now(),
     });
-
-    // Clean up expired nonces
-    this.cleanExpiredNonces();
 
     return nonce;
   }

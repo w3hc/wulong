@@ -21,6 +21,10 @@ export class AuthController {
     description: 'Nonce generated successfully',
     type: NonceResponseDto,
   })
+  @ApiResponse({
+    status: 429,
+    description: 'Rate limit exceeded, or too many pending nonces',
+  })
   generateNonce(@Body() body: NonceRequestDto): NonceResponseDto {
     const nonce = this.siweService.generateNonce(body.address);
     const issuedAt = new Date().toISOString();

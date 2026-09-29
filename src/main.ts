@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
@@ -19,10 +20,16 @@ async function bootstrap() {
       }
     : undefined;
 
-  const app = await NestFactory.create(AppModule, {
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     httpsOptions,
     logger: isProd ? new SanitizedLogger() : undefined,
   });
+
+  // Rate limiting keys on the client IP, which Phala's proxy forwards
+  // in X-Forwarded-For; trust that single hop only
+  if (isProd) {
+    app.set('trust proxy', 1);
+  }
 
   // Security headers - protects against common web vulnerabilities
   app.use(helmet());
