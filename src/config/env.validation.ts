@@ -1,5 +1,12 @@
 import { plainToInstance } from 'class-transformer';
-import { IsEnum, IsInt, IsUrl, Min, validateSync } from 'class-validator';
+import {
+  IsEnum,
+  IsInt,
+  IsString,
+  IsUrl,
+  Min,
+  validateSync,
+} from 'class-validator';
 
 /**
  * Environment configuration schema.
@@ -21,6 +28,15 @@ export class EnvironmentVariables {
   @IsInt()
   @Min(1)
   THROTTLE_LIMIT?: number;
+
+  // Path of the chest file, defaults to <cwd>/chest.json
+  @IsString()
+  CHEST_PATH?: string;
+
+  // Maximum size of chest.json, in bytes
+  @IsInt()
+  @Min(1)
+  CHEST_MAX_BYTES?: number;
 }
 
 /**

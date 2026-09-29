@@ -8,9 +8,14 @@ services:
       - "3000:3000"
     volumes:
       - /var/run/dstack.sock:/var/run/dstack.sock
+      - wulong-data:/app/data
     environment:
       - NODE_ENV=${NODE_ENV}
       - KMS_URL=${KMS_URL}
       - ADMIN_MLKEM_PUBLIC_KEY=${ADMIN_MLKEM_PUBLIC_KEY}
       - ADMIN_MLKEM_PRIVATE_KEY=${ADMIN_MLKEM_PRIVATE_KEY}
+      - CHEST_PATH=/app/data/chest.json
     restart: unless-stopped
+
+volumes:
+  wulong-data:

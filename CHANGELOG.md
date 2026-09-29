@@ -10,6 +10,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - `THROTTLE_LIMIT` and `THROTTLE_TTL`: requests allowed per route per IP, and the window in milliseconds. Default to 10 per 60 s.
 - `SIWE_DOMAIN`: comma-separated list of UI hosts (with port) allowed in SIWE messages. Required in production; defaults to `localhost` and `localhost:3000` elsewhere.
+- `CHEST_PATH`: location of the chest file. Defaults to `<cwd>/chest.json`; `docker-compose.yml` sets it to `/app/data/chest.json` on the `wulong-data` volume.
+- `CHEST_MAX_BYTES`: maximum size of the chest file. Defaults to 50 MB; a store that would exceed it returns 507 and leaves the chest untouched.
 
 ### Fixed
 
@@ -17,6 +19,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Rate limiting now applies to every route: `ThrottlerGuard` was configured but never registered.
 - Pending SIWE nonces are capped at 10,000; past the cap, `POST /auth/nonce` returns 429 instead of growing memory without bound.
 - In production, the client IP is read from `X-Forwarded-For` (one proxy hop trusted), so clients behind Phala's proxy are not throttled together.
+- Concurrent `POST /chest/store` calls could overwrite each other and lose secrets. Writes to the chest are now serialized.
+- A crash mid-write could corrupt the whole chest. It is now written to a flushed temp file and renamed into place.
+- Every redeploy wiped all stored secrets, since the chest lived in the container filesystem. It now lives on a named Docker volume.
 
 ### Changed
 
