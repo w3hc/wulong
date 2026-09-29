@@ -91,7 +91,7 @@ export class SecretService {
       const ciphertextBytes = Buffer.from(recipient.ciphertext, 'base64');
       if (ciphertextBytes.length !== 1568 + 32) {
         throw new BadRequestException(
-          `Invalid ML-KEM ciphertext size: ${ciphertextBytes.length} (expected ${1568 + 32})`,
+          `Invalid ML-KEM ciphertext size: expected ${1568 + 32} bytes`,
         );
       }
     }
@@ -106,7 +106,7 @@ export class SecretService {
     for (const address of publicAddresses) {
       if (!isAddress(address)) {
         throw new BadRequestException(
-          `Invalid Ethereum address: ${String(address)}`,
+          'Invalid Ethereum address in publicAddresses',
         );
       }
     }
@@ -176,7 +176,7 @@ export class SecretService {
     // Check if slot exists
     const entry = secretData[slot];
     if (!entry) {
-      throw new NotFoundException(`Slot not found: ${slot}`);
+      throw new NotFoundException('Slot not found');
     }
 
     // Normalize caller address for comparison
@@ -195,10 +195,8 @@ export class SecretService {
         entry.encryptedPayload,
       );
       return plaintextSecret;
-    } catch (error) {
-      throw new BadRequestException(
-        `Failed to decrypt secret: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      );
+    } catch {
+      throw new BadRequestException('Failed to decrypt secret');
     }
   }
 
