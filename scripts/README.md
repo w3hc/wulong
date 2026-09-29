@@ -14,7 +14,7 @@ Client-side TEE attestation verification utility for Intel TDX quotes from Phala
 
 ```bash
 # Verify live server attestation
-pnpm verify:attestation https://your-wulong.phala.network/attestation
+pnpm verify:attestation https://your-wulong.phala.network/chest/attestation
 
 # Or verify saved attestation
 pnpm verify:attestation attestation.json
@@ -25,6 +25,7 @@ pnpm ts-node scripts/verify-attestation.ts <url-or-file>
 
 **What it verifies**:
 
+✅ Key binding: the quote's `report_data` commits to the returned ML-KEM and identity keys and to a fresh random nonce, and the key manifest is signed by the identity key (see [KEY_DERIVATION.md](../docs/KEY_DERIVATION.md#verification)). It exits with an error if not: do not encrypt to that key.
 ✅ Platform is Intel TDX (not 'none' mock)
 ✅ TDX quote structure is valid
 ✅ Certificate chain is present
@@ -37,6 +38,7 @@ pnpm ts-node scripts/verify-attestation.ts <url-or-file>
 ❌ TCB (Trusted Computing Base) status
 ❌ Certificate revocation lists (CRLs)
 ❌ Comparison against known good measurement
+❌ The identity key's GetKey signature chain up to the on-chain KMS root
 
 **Example output**:
 
@@ -44,7 +46,12 @@ pnpm ts-node scripts/verify-attestation.ts <url-or-file>
 🔍 Wulong TEE Attestation Verifier
 ═══════════════════════════════════
 
-Fetching attestation from: https://...phala.network/attestation
+Fetching attestation from: https://...phala.network/chest/attestation?nonce=...
+
+🔑 Key Binding Check:
+✅ report_data commits to the ML-KEM and identity keys
+✅ Key manifest signed by the identity key (app 0x...)
+✅ The quote carries that report_data
 
 🖥️  Platform Check:
 ℹ️    Platform: intel-tdx
@@ -70,6 +77,7 @@ Fetching attestation from: https://...phala.network/attestation
 ✅ Timestamp is fresh
 
 📊 Verification Summary:
+✅ Key binding: Valid ✓
 ✅ Platform: Intel TDX ✓
 ✅ Quote structure: Valid ✓
 ✅ Certificate chain: Present ✓
@@ -96,7 +104,7 @@ The script outputs detailed instructions for Steps 1-5:
 
 1. Save the MRTD measurement:
    ```bash
-   pnpm verify:attestation https://your-server/attestation | grep "MRTD" > measurement.txt
+   pnpm verify:attestation https://your-server/chest/attestation | grep "MRTD" > measurement.txt
    ```
 
 2. Publish the expected measurement in your project documentation

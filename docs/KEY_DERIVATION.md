@@ -1,6 +1,6 @@
 # Enclave-Derived Keys
 
-Design for how Wulong obtains its long-lived private keys so that they exist only inside the attested enclave, and no one, the operator included, can obtain them. Tracks [#31](https://github.com/w3hc/wulong/issues/31). **Status:** ML-KEM and identity key derivation are implemented ([#33](https://github.com/w3hc/wulong/issues/33)); serving the key manifest and the new `report_data`, the relayer wallet and on-chain governance are not yet.
+Design for how Wulong obtains its long-lived private keys so that they exist only inside the attested enclave, and no one, the operator included, can obtain them. Tracks [#31](https://github.com/w3hc/wulong/issues/31). **Status:** ML-KEM and identity key derivation are implemented ([#33](https://github.com/w3hc/wulong/issues/33)), and `GET /chest/attestation` serves the key manifest and the new `report_data` ([#35](https://github.com/w3hc/wulong/issues/35)); the relayer wallet, TLS inside the enclave and on-chain governance are not yet.
 
 ## Table of Contents
 
