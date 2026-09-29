@@ -189,10 +189,10 @@ In production, startup fails if:
 
 A follow-up issue implements this. Expected shape:
 
-- `KeyDerivationService` (`src/keys/`): calls `/v1/GetKey` over the socket (the v1 client is about 30 lines of `http.request` with `socketPath`, until `@phala/dstack-sdk` ships v1), derives the three keys once, and exposes only public keys, `decap(ct)` and signing methods. Private keys never leave the service.
+- `KeyDerivationService` (`src/keys/`): calls `/v1/GetKey` over the socket (the v1 client is about 30 lines of `http.request` with `socketPath`), derives the three keys once, and exposes only public keys, `decap(ct)` and signing methods. Private keys never leave the service.
 - `MlKemEncryptionService` takes the decapsulation capability from it instead of `ConfigService`.
 - `SecretsService`'s KMS and env paths for keys, `ADMIN_MLKEM_*` in compose and docs, and `scripts/generate-admin-keypair.ts` for production are removed.
-- Attestation (`tee-platform.service.ts`) switches to the v1 `Attest` with the `report_data` above, and gains `?nonce=`.
+- Attestation (`tee-platform.service.ts`) quotes the `report_data` above, and gains `?nonce=`. It uses `/GetQuote` through the same client, so `@phala/dstack-sdk` is no longer a dependency.
 - `scripts/verify-attestation.ts` implements the verification steps.
 - Tests pin the v1 test vectors from the dstack spec and an ML-KEM `deriveKeyPair` vector from [NIST ACVP](https://github.com/usnistgov/ACVP-Server).
 - Deployment docs cover creating the `DstackApp` on Base, the Safe and timelock setup, and the release checklist.

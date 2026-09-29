@@ -12,7 +12,7 @@ Client (Browser/Node)          Wulong TEE Service
         |<--   + ML-KEM public key-----|
         |                              |
         |--2. Verify attestation------>|
-        |   (code measurement)         |
+        |   (quote, RTMR3, key binding)|
         |                              |
         |--3. Encrypt with ML-KEM----->|
         |   (quantum-resistant)        |
@@ -57,9 +57,10 @@ curl -k https://localhost:3000/chest/attestation | jq
 
 # Expected output:
 # {
-#   "platform": "none",              # or "intel-tdx", "amd-sev-snp", etc.
-#   "report": "...",                 # Base64 attestation report
-#   "measurement": "...",            # Code hash
+#   "platform": "none",              # "intel-tdx" in a TEE or with the simulator
+#   "report": "...",                 # Base64 TDX quote (placeholder when "none")
+#   "measurements": null,            # { mrtd, rtmr0..rtmr3 } in a TEE
+#   "eventLog": null,                # dstack event log in a TEE
 #   "timestamp": "2026-03-18T...",
 #   "mlkemPublicKey": "k3VAR..."    # ← Should be present
 # }
@@ -92,14 +93,15 @@ import { createMlKem1024 } from 'mlkem';
 const response = await fetch('https://your-tee-service.com/chest/attestation');
 const attestation = await response.json();
 
-console.log('Platform:', attestation.platform);        // 'intel-tdx', 'amd-sev-snp', etc.
-console.log('Measurement:', attestation.measurement);  // Code hash
+console.log('Platform:', attestation.platform);             // 'intel-tdx'
+console.log('RTMR3:', attestation.measurements?.rtmr3);     // The app's identity
 console.log('ML-KEM Public Key:', attestation.mlkemPublicKey);
 
-// Verify measurement matches published source code
-const expectedMeasurement = 'abc123...'; // From GitHub release
-if (attestation.measurement !== expectedMeasurement) {
-  throw new Error('Code measurement mismatch! Service may be compromised');
+// RTMR3 must be the value you reproduced from the published compose file,
+// see TEE_SETUP.md#measurements. Verify the quote signature first.
+const expectedRtmr3 = 'd4e5f6a7...';
+if (attestation.measurements?.rtmr3 !== expectedRtmr3) {
+  throw new Error('Unexpected app running in the TEE! Service may be compromised');
 }
 
 // Now you can trust the ML-KEM public key
@@ -246,9 +248,9 @@ export async function encryptForTee(
     throw new Error('ML-KEM encryption not available on this service');
   }
 
-  // Verify attestation (you should check measurement here)
-  // if (attestation.measurement !== expectedMeasurement) {
-  //   throw new Error('Code measurement mismatch!');
+  // Verify attestation (you should check the quote and RTMR3 here)
+  // if (attestation.measurements?.rtmr3 !== expectedRtmr3) {
+  //   throw new Error('Unexpected app running in the TEE!');
   // }
 
   const adminPublicKey = Buffer.from(attestation.mlkemPublicKey, 'base64');
@@ -374,14 +376,14 @@ console.log('Decrypted:', secret); // TEE already decrypted it
 const attestation = await fetch('/chest/attestation').then(r => r.json());
 // Use public key directly ❌
 
-// DO: Verify the quote, the measurement and the key binding first
+// DO: Verify the quote, RTMR3 and the key binding first
 const nonce = crypto.getRandomValues(new Uint8Array(32));
 const attestation = await fetch(
   `/chest/attestation?nonce=${toHex(nonce)}`,
 ).then(r => r.json());
-const expectedMeasurement = getExpectedMeasurementFromGitHub();
-if (attestation.measurement !== expectedMeasurement) {
-  throw new Error('Code measurement mismatch!');
+const expectedRtmr3 = reproduceRtmr3FromCompose(); // TEE_SETUP.md#measurements
+if (attestation.measurements?.rtmr3 !== expectedRtmr3) {
+  throw new Error('Unexpected app running in the TEE!');
 }
 // The quote's report_data must commit to mlkemPublicKey and your nonce,
 // otherwise anyone between you and the enclave could swap the key
@@ -451,9 +453,9 @@ if (attestation.keyVersion < MINIMUM_KEY_VERSION) {
 
 The server could not derive its ML-KEM keys from the dstack guest agent (development only; production refuses to start). Start the dstack simulator and set `DSTACK_SIMULATOR_ENDPOINT`.
 
-### "Code measurement mismatch"
+### "Unexpected app running in the TEE"
 
-The code running in the TEE doesn't match the expected measurement. This could mean:
+RTMR3 doesn't match the value reproduced from the compose file. This could mean:
 1. The service was updated (check for new releases)
 2. The TEE is compromised (DO NOT send secrets)
 

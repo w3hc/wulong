@@ -12,7 +12,7 @@ A NestJS API designed to run inside a Trusted Execution Environment (TEE) with q
 ## Features
 
 - **TEE Attestation** - Cryptographic proof of code integrity
-  - Platforms: [AMD SEV-SNP](https://www.amd.com/en/developer/sev.html), [Intel TDX](https://www.intel.com/content/www/us/en/developer/tools/trust-domain-extensions/overview.html), [AWS Nitro](https://aws.amazon.com/ec2/nitro/), [Phala](https://phala.network/)
+  - Platform: [dstack](https://github.com/Dstack-TEE/dstack) on [Intel TDX](https://www.intel.com/content/www/us/en/developer/tools/trust-domain-extensions/overview.html), e.g. [Phala Cloud](https://phala.network/); refuses to start in production outside it
   - See [TEE setup guide](docs/TEE_SETUP.md)
 - **Web3 Authentication** - [SIWE](https://login.xyz) (Sign-In with Ethereum)
   - See [auth guide](docs/SIWE.md)
@@ -123,7 +123,7 @@ Secrets are stored, encrypted, in a single JSON file. Writes are serialized with
 ### Architecture & Security
 
 - [**Overview**](docs/OVERVIEW.md) - Project overview, architecture, and security model
-- [**TEE Setup**](docs/TEE_SETUP.md) - Platform-specific deployment (AMD SEV-SNP, Intel TDX, AWS Nitro, Phala)
+- [**TEE Setup**](docs/TEE_SETUP.md) - dstack attestation, fail-closed startup, and how to reproduce the measurements
 - [**Side Channel Attacks**](docs/SIDE_CHANNEL_ATTACKS.md) - Security considerations and mitigations
 - [**Implementation Plan**](docs/MLKEM_IMPLEMENTATION_PLAN.md) - ML-KEM development roadmap
 

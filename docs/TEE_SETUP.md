@@ -1,961 +1,115 @@
-# TEE Platform Deployment Guide
+# TEE Setup
 
-This guide provides step-by-step instructions for deploying Wulong to various Trusted Execution Environment (TEE) platforms.
+Wulong runs on one TEE: an Intel TDX confidential VM managed by [dstack](https://github.com/Dstack-TEE/dstack), such as [Phala Cloud](https://cloud.phala.network/). Other platforms (AMD SEV-SNP, native TDX, AWS Nitro) are not supported. Their earlier code paths were stubs, and they were removed so that an attestation never looks real without being real.
+
+For the deployment itself, see [PHALA_CONFIG.md](PHALA_CONFIG.md).
 
 ## Table of Contents
 
-- [Prerequisites](#prerequisites)
-- [Platform-Specific Setup](#platform-specific-setup)
-  - [AMD SEV-SNP](#amd-sev-snp)
-  - [Intel TDX](#intel-tdx)
-  - [AWS Nitro Enclaves](#aws-nitro-enclaves)
-  - [Phala Network (Intel TDX/SGX)](#phala-network-intel-tdxsgx)
-- [General TEE Configuration](#general-tee-configuration)
-- [Verification and Testing](#verification-and-testing)
-- [Security Considerations](#security-considerations)
+- [How attestation works](#how-attestation-works)
+- [Fail-closed startup](#fail-closed-startup)
+- [Measurements](#measurements)
+- [Development without a TEE](#development-without-a-tee)
+- [Security considerations](#security-considerations)
 - [Troubleshooting](#troubleshooting)
 
-## Prerequisites
+## How attestation works
 
-Before deploying to any TEE platform, ensure you have:
+`TeePlatformService` (`src/attestation/tee-platform.service.ts`) asks the dstack guest agent for a TDX quote through `POST /GetQuote` on `/var/run/dstack.sock`, via Wulong's own client (`src/keys/dstack-v1.client.ts`). The socket must be mounted into the container, as `docker-compose.yml` does.
 
-1. **Built the application**:
-   ```bash
-   pnpm install
-   pnpm build
-   ```
+`GET /chest/attestation` returns:
 
-2. **Docker installed** (recommended for production):
-   ```bash
-   docker --version
-   ```
+- `report`: the base64 TDX v4 quote
+- `measurements`: `mrtd` and `rtmr0` to `rtmr3`, read from the quote (`src/attestation/tdx-quote.ts`)
+- `eventLog`: the dstack event log (JSON), which replays RTMR0–3
+- `reportData`: the quote's 64-byte `report_data`, which commits to Wulong's public keys, its TLS certificate and the client's nonce ([KEY_DERIVATION.md](KEY_DERIVATION.md#report_data))
 
-3. **Environment variables configured**:
-   ```bash
-   cp .env.template .env
-   # Edit .env with production values
-   NODE_ENV=production
-   KMS_URL=https://your-kms.example.com/release
-   ```
+The service checks that every quote carries the `report_data` it asked for.
 
-4. **TLS certificates ready**: In production, certificates should be generated inside the enclave to ensure the host never sees the private key.
+## Fail-closed startup
 
-## Platform-Specific Setup
+With `NODE_ENV=production`, Wulong refuses to start when:
 
-### AMD SEV-SNP
+- `/var/run/dstack.sock` is absent;
+- `DSTACK_SIMULATOR_ENDPOINT` is set (the simulator's quotes and keys prove nothing);
+- the first quote cannot be generated or parsed, or does not carry the requested `report_data`.
 
-AMD Secure Encrypted Virtualization - Secure Nested Paging provides VM-level isolation with encrypted memory and attestation.
+There is no mock fallback in production.
 
-#### Hardware Requirements
-- AMD EPYC 3rd Gen (Milan) or newer processor
-- SEV-SNP enabled in BIOS
-- Host OS with SEV-SNP support (Linux kernel 5.19+)
+## Measurements
 
-#### Installation Steps
+Quote offsets (TDX v4: a 48-byte header, then the TD report body):
 
-1. **Enable SEV-SNP on the host**:
-   ```bash
-   # Check if SEV-SNP is available
-   dmesg | grep -i sev
+| Field | Offset | Size | What it measures on dstack |
+| --- | --- | --- | --- |
+| MRTD | 184 | 48 | Virtual firmware (OVMF) |
+| RTMR0 | 376 | 48 | Virtual hardware: CPU count, memory size, devices |
+| RTMR1 | 424 | 48 | Linux kernel |
+| RTMR2 | 472 | 48 | Kernel command line (including the rootfs hash) and initrd |
+| RTMR3 | 520 | 48 | The app: app id, compose hash, instance id, key provider |
+| REPORTDATA | 568 | 64 | Wulong's key and nonce commitment |
 
-   # Should show: AMD Memory Encryption Features active: SEV SEV-ES SEV-SNP
-   ```
+**RTMR3 identifies the app.** MRTD and RTMR0–2 identify the dstack OS image and the VM size, and are the same for every app on that image. Comparing MRTD alone, which is what the removed `measurement` field held (and at the wrong offset, 112, which is MRSIGNERSEAM), says nothing about which code runs.
 
-2. **Install SEV-SNP guest tools**:
-   ```bash
-   # Ubuntu/Debian
-   apt-get update
-   apt-get install -y snpguest
+### Reproducing RTMR3 from the compose file
 
-   # Or build from source
-   git clone https://github.com/virtee/snpguest
-   cd snpguest
-   cargo build --release
-   cp target/release/snpguest /usr/local/bin/
-   ```
+1. **Compose hash.** Phala Cloud deploys an `app-compose.json` that embeds `docker-compose.yml`, and its compose hash is the SHA-256 of that file. Get it with `phala cvms attestation` or from the dashboard, and check that its `docker_compose_file` is this repository's `docker-compose.yml` at the release you audit, with the image pinned by digest.
+2. **Replay.** Start from 48 zero bytes, and for each event of `eventLog` whose `imr` is 3, in order, compute `rtmr3 = SHA-384(rtmr3 || event.digest)`. The result must equal `measurements.rtmr3`, and the quote's RTMR3 once its signature is verified.
+3. **Check the events.** Recompute each event's digest from its name and payload. In dstack's v1 format, the digest is `SHA-384(event_type_le32 || ":" || event || ":" || payload)` with `event_type = 0x08000001`; v2 hashes a canonical JSON form (see [`runtime_events.rs`](https://github.com/Dstack-TEE/dstack/blob/master/dstack/cc-eventlog/src/runtime_events.rs)). Then check that the `compose-hash` event's payload is the compose hash from step 1, and that `app-id` is the app you expect.
 
-3. **Verify device access**:
-   ```bash
-   ls -l /dev/sev-guest
-   # Should show: crw------- 1 root root
+The dstack JS and Python SDKs provide `replayRtmrs()`, and [dstack-verifier](https://github.com/Dstack-TEE/dstack/tree/master/dstack/verifier) does the whole check.
 
-   # Grant access to the application user if needed
-   usermod -a -G sev <app-user>
-   ```
+### Reproducing MRTD and RTMR0–2
 
-4. **Launch the VM with SEV-SNP**:
-   ```bash
-   qemu-system-x86_64 \
-     -enable-kvm \
-     -cpu EPYC-v4 \
-     -machine q35,confidential-guest-support=sev0,memory-backend=ram1 \
-     -object memory-backend-memfd,id=ram1,size=4G,share=true,prealloc=false \
-     -object sev-snp-guest,id=sev0,cbitpos=51,reduced-phys-bits=1 \
-     -m 4G \
-     -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE.fd \
-     -drive if=pflash,format=raw,file=/path/to/OVMF_VARS.fd \
-     -drive file=disk.qcow2,if=none,id=disk0,format=qcow2 \
-     -device virtio-scsi-pci,id=scsi0,disable-legacy=on,iommu_platform=true \
-     -device scsi-hd,drive=disk0 \
-     -netdev user,id=vmnic,hostfwd=tcp::3443-:443 \
-     -device virtio-net-pci,disable-legacy=on,iommu_platform=true,netdev=vmnic \
-     -nographic
-   ```
+Build the dstack OS image at the version the CVM runs and compute its measurements with [dstack-mr](https://github.com/Dstack-TEE/dstack/tree/master/dstack/dstack-mr), giving the CVM's CPU count and memory. See dstack's [TDX attestation guide](https://github.com/Dstack-TEE/dstack/blob/master/docs/attestation-tdx.md).
 
-5. **Inside the VM, verify SEV-SNP is active**:
-   ```bash
-   snpguest report /tmp/test.bin
-   # Should succeed without errors
-   ```
+### What `pnpm verify:attestation` checks
 
-6. **Deploy the application**:
-   ```bash
-   # Copy application files to the VM
-   cd /app/wulong
+It checks the key binding, parses the quote, and checks that the returned `measurements` are the ones in the quote. It does not verify the quote signature, TCB status or the RTMR3 replay: use dcap-qvl, dstack-verifier or Phala's verifier for those ([scripts/README.md](../scripts/README.md)).
 
-   # Generate TLS certificates inside the enclave
-   mkdir -p /run/secrets
-   openssl req -x509 -newkey rsa:4096 \
-     -keyout /run/secrets/tls.key \
-     -out /run/secrets/tls.cert \
-     -days 365 -nodes \
-     -subj "/CN=your-domain.com"
+## Development without a TEE
 
-   # Start the application
-   NODE_ENV=production node dist/main.js
-   ```
+Outside production:
 
-#### Attestation Verification
+- with `DSTACK_SIMULATOR_ENDPOINT` set, quotes come from the [dstack simulator](https://github.com/Dstack-TEE/dstack/tree/master/sdk/simulator) and have `platform: "intel-tdx"`;
+- without the simulator or the socket, `GET /chest/attestation` returns `platform: "none"`, a placeholder `report`, and `measurements` and `eventLog` set to `null`. Clients must refuse it.
 
-```bash
-# Get attestation report
-curl -k https://your-server:443/chest/attestation > attestation.json
+See [LOCAL_SETUP.md](LOCAL_SETUP.md).
 
-# Extract and verify the report
-cat attestation.json | jq -r '.report' | base64 -d > report.bin
-
-# Verify with AMD KDS (Key Distribution Server)
-snpguest verify report.bin --platform amd-sev-snp
-```
-
-### Intel TDX
-
-Intel Trust Domain Extensions provides VM-level isolation with hardware-enforced confidentiality.
-
-#### Deployment Readiness
-
-✅ **Production Ready** - Wulong has full Intel TDX support with:
-- Automatic TDX platform detection
-- Attestation report generation using `tdx-attest` tool
-- Fallback to direct `/dev/tdx-guest` device access
-- User data binding for nonce commitments
-- Comprehensive test coverage
-
-#### Hardware Requirements
-- Intel Xeon Scalable 4th Gen (Sapphire Rapids) or newer
-- TDX enabled in BIOS
-- Host OS with TDX support (Linux kernel 5.19+)
-
-#### Installation Steps
-
-1. **Verify TDX support**:
-   ```bash
-   # Check CPU capabilities
-   grep -o 'tdx_guest' /proc/cpuinfo
-
-   # Check kernel module
-   lsmod | grep tdx
-   ```
-
-2. **Install TDX attestation tools** (Required for production):
-   ```bash
-   # Ubuntu/Debian
-   wget https://download.01.org/intel-sgx/latest/linux-latest/distro/ubuntu22.04-server/tdx-attest.deb
-   dpkg -i tdx-attest.deb
-
-   # Or build from source
-   git clone https://github.com/intel/SGXDataCenterAttestationPrimitives
-   cd QuoteGeneration/linux
-   make
-   make install
-   ```
-
-   **Important**: The `tdx-attest` tool is the recommended method for generating TDX quotes. While Wulong has a fallback that reads directly from `/dev/tdx-guest`, the fallback is simplified and may not work correctly in all TDX environments.
-
-3. **Verify TDX device access**:
-   ```bash
-   ls -l /dev/tdx-guest
-   # or
-   ls -l /dev/tdx_guest
-
-   # Check TDX module info
-   cat /sys/firmware/tdx_seam/version
-
-   # Verify tdx-attest tool works
-   tdx-attest --version
-   ```
-
-4. **Launch TD (Trust Domain)**:
-   ```bash
-   # Using QEMU with TDX support
-   qemu-system-x86_64 \
-     -accel kvm \
-     -m 4G \
-     -smp 4 \
-     -object tdx-guest,id=tdx0 \
-     -machine q35,kernel_irqchip=split,confidential-guest-support=tdx0,memory-backend=ram1 \
-     -object memory-backend-memfd,id=ram1,size=4G,prealloc=true \
-     -cpu host,-kvm-steal-time \
-     -bios /usr/share/qemu/OVMF.fd \
-     -drive file=disk.qcow2,if=virtio \
-     -netdev user,id=vmnic,hostfwd=tcp::3443-:443 \
-     -device virtio-net-pci,netdev=vmnic \
-     -nographic
-   ```
-
-5. **Inside the TD, verify TDX is active**:
-   ```bash
-   # Generate test quote
-   tdx-attest quote /tmp/test-quote.dat
-
-   # Check MRTD (Measurement Register for TD)
-   tdx-attest info
-
-   # Verify device permissions
-   ls -l /dev/tdx-guest
-   # Should be readable by the application user
-   ```
-
-6. **Deploy the application**:
-   ```bash
-   cd /app/wulong
-
-   # Generate TLS certificates inside the TD
-   mkdir -p /run/secrets
-   openssl req -x509 -newkey rsa:4096 \
-     -keyout /run/secrets/tls.key \
-     -out /run/secrets/tls.cert \
-     -days 365 -nodes \
-     -subj "/CN=your-domain.com"
-
-   # Start the application
-   NODE_ENV=production node dist/main.js
-   ```
-
-#### Attestation Verification
-
-```bash
-# Get attestation report
-curl -k https://your-server:443/chest/attestation > attestation.json
-
-# Verify the platform is TDX
-cat attestation.json | jq -r '.platform'
-# Expected output: "intel-tdx"
-
-# Extract quote
-cat attestation.json | jq -r '.report' | base64 -d > quote.dat
-
-# Extract measurement (MRTD)
-cat attestation.json | jq -r '.measurement'
-# This is the hex-encoded measurement of your TD
-
-# Verify with Intel Attestation Service
-# Use Intel's DCAP (Data Center Attestation Primitives) verification library
-# For example, using Intel's quote verification library:
-# https://github.com/intel/SGXDataCenterAttestationPrimitives
-```
-
-#### Implementation Details
-
-**How Wulong generates TDX attestation:**
-
-1. **Primary method**: Executes `tdx-attest quote /tmp/tdx-quote.dat` command
-   - This is the recommended approach for production
-   - Requires `tdx-attest` tool to be installed in the TD
-   - Generates a properly formatted TDX quote structure
-
-2. **Fallback method**: Reads directly from `/dev/tdx-guest` device
-   - Used only if `tdx-attest` command fails
-   - Simplified implementation using direct device read
-   - May not work correctly in all TDX environments
-
-**Attestation report structure:**
-```json
-{
-  "platform": "intel-tdx",
-  "report": "base64-encoded-tdx-quote",
-  "measurement": "hex-encoded-mrtd-hash",
-  "timestamp": "2026-03-18T..."
-}
-```
-
-**Detection logic** (src/attestation/tee-platform.service.ts):
-- Checks for `/dev/tdx-guest`
-- Checks for `/dev/tdx_guest` (alternate naming)
-- Checks for `/sys/firmware/tdx_seam` directory
-
-#### Production Recommendations
-
-1. **Always install `tdx-attest` tool**: Don't rely on the fallback device read method
-2. **Verify quote structure**: Ensure the generated quotes are valid TDX quote format
-3. **Test attestation before production**: Use Intel's verification service to validate quotes
-4. **Monitor attestation failures**: Log and alert on attestation generation errors
-5. **Keep TDX firmware updated**: Intel regularly releases TDX security patches
-
-### AWS Nitro Enclaves
-
-AWS Nitro Enclaves provide isolated compute environments on EC2 instances.
-
-#### Prerequisites
-- EC2 instance with Nitro Enclaves support (M5, M5d, M6i, C5, C5d, C6i, R5, R5d, R6i, etc.)
-- Amazon Linux 2 or Ubuntu 20.04+
-- At least 4 vCPUs (2 for enclave, 2 for parent)
-
-#### Installation Steps
-
-1. **Install Nitro CLI**:
-   ```bash
-   # Amazon Linux 2
-   sudo amazon-linux-extras install aws-nitro-enclaves-cli -y
-   sudo yum install aws-nitro-enclaves-cli-devel -y
-
-   # Ubuntu
-   wget https://github.com/aws/aws-nitro-enclaves-cli/releases/latest/download/nitro-cli_$(uname -m).deb
-   sudo dpkg -i nitro-cli_$(uname -m).deb
-   ```
-
-2. **Configure the instance**:
-   ```bash
-   # Allocate resources for enclaves (2 vCPUs, 2048 MB memory)
-   sudo sed -i 's/^cpu_count:.*/cpu_count: 2/' /etc/nitro_enclaves/allocator.yaml
-   sudo sed -i 's/^memory_mib:.*/memory_mib: 2048/' /etc/nitro_enclaves/allocator.yaml
-
-   # Enable and start the allocator service
-   sudo systemctl enable --now nitro-enclaves-allocator.service
-   sudo systemctl enable --now docker
-
-   # Add user to docker and ne groups
-   sudo usermod -aG docker $USER
-   sudo usermod -aG ne $USER
-
-   # Re-login for group changes to take effect
-   ```
-
-3. **Build enclave image**:
-   ```bash
-   # Create Dockerfile for enclave
-   cat > Dockerfile.enclave <<EOF
-   FROM node:20-slim
-
-   WORKDIR /app
-
-   # Copy application files
-   COPY package*.json pnpm-lock.yaml ./
-   COPY dist ./dist
-
-   # Install dependencies
-   RUN npm install -g pnpm && pnpm install --prod
-
-   # Generate TLS certificates
-   RUN mkdir -p /run/secrets && \
-       openssl req -x509 -newkey rsa:4096 \
-       -keyout /run/secrets/tls.key \
-       -out /run/secrets/tls.cert \
-       -days 365 -nodes \
-       -subj "/CN=enclave.local"
-
-   # Set environment
-   ENV NODE_ENV=production
-
-   EXPOSE 443
-
-   CMD ["node", "dist/main.js"]
-   EOF
-
-   # Build Docker image
-   docker build -f Dockerfile.enclave -t wulong-enclave:latest .
-
-   # Build Nitro Enclave Image File (EIF)
-   nitro-cli build-enclave \
-     --docker-uri wulong-enclave:latest \
-     --output-file wulong.eif
-
-   # Save PCR values for attestation verification
-   nitro-cli describe-eif --eif-path wulong.eif > pcr-values.json
-   ```
-
-4. **Run the enclave**:
-   ```bash
-   # Start the enclave
-   nitro-cli run-enclave \
-     --eif-path wulong.eif \
-     --cpu-count 2 \
-     --memory 2048 \
-     --enclave-cid 16 \
-     --debug-mode
-
-   # Check enclave status
-   nitro-cli describe-enclaves
-
-   # View enclave console (debug mode only)
-   nitro-cli console --enclave-id $(nitro-cli describe-enclaves | jq -r '.[0].EnclaveID')
-   ```
-
-5. **Set up parent instance proxy** (to forward traffic to enclave):
-   ```bash
-   # Install vsock-proxy
-   sudo yum install socat -y
-
-   # Forward port 443 to enclave
-   socat TCP-LISTEN:443,fork VSOCK-CONNECT:16:443 &
-   ```
-
-#### Attestation Verification
-
-```bash
-# Get attestation report
-curl https://your-server:443/chest/attestation > attestation.json
-
-# Extract and parse attestation document (CBOR format)
-cat attestation.json | jq -r '.report' | base64 -d > attestation.cbor
-
-# Verify using aws-nitro-enclaves-cose
-# Install verification tools
-pip install cbor2 cryptography
-
-# Python script to verify attestation
-python3 <<EOF
-import cbor2
-import base64
-from cryptography import x509
-from cryptography.hazmat.backends import default_backend
-
-# Load attestation document
-with open('attestation.cbor', 'rb') as f:
-    attestation = cbor2.load(f)
-
-# Verify signature and certificate chain
-# Extract PCRs and compare with expected values
-print(f"PCR0: {attestation['pcrs'][0].hex()}")
-print(f"PCR1: {attestation['pcrs'][1].hex()}")
-print(f"PCR2: {attestation['pcrs'][2].hex()}")
-
-# Compare with values from pcr-values.json
-EOF
-```
-
-### Phala Network (Intel TDX/SGX)
-
-[Phala Network](https://phala.network/) provides TEE-as-a-Service infrastructure through [Phala Cloud](https://cloud.phala.network/) and [Dstack](https://docs.phala.com/dstack/overview), supporting Intel TDX, Intel SGX, AMD SEV, and GPU TEE.
-
-#### Overview
-
-Phala Network is a trustless cloud infrastructure platform that enables deployment of Docker-based applications into TEE environments in minutes. Phala uses [Dstack](https://github.com/Dstack-TEE/dstack), an open-source TEE SDK and guest OS (Confidential Computing Consortium project under Linux Foundation), to simplify deployment of arbitrary Docker containers into TEE.
-
-**Compatibility Status:**
-- ✅ **Intel TDX** - Compatible (Phala supports via Dstack, Wulong supports)
-- ❌ **Intel SGX** - Not supported by Wulong (SGX uses different APIs than TDX)
-- ⚠️ **AMD SEV** - Phala's AMD support may differ from Wulong's SEV-SNP implementation
-- ❌ **GPU TEE (NVIDIA H100/H200)** - Not supported by Wulong
-
-**Key Resources:**
-- [Phala Cloud Platform](https://cloud.phala.network/)
-- [Dstack Documentation](https://docs.phala.com/dstack/getting-started)
-- [Dstack GitHub Repository](https://github.com/Dstack-TEE/dstack)
-- [Hardware Requirements](https://docs.phala.com/dstack/hardware-requirements)
-- [Attestation Overview](https://docs.phala.com/phala-cloud/attestation/overview)
-- [AMD SEV vs Intel TDX vs NVIDIA GPU TEE Comparison](https://phala.com/learn/AMD-SEV-vs-Intel-TDX-vs-NVIDIA-GPU-TEE)
-
-#### Deployment on Phala (Intel TDX)
-
-If you want to deploy Wulong on Phala's Intel TDX infrastructure using Dstack:
-
-**Prerequisites:**
-
-1. **Hardware Requirements:**
-   - Bare metal Intel TDX server following [canonical/tdx specifications](https://github.com/canonical/tdx)
-   - Intel Xeon 5th/6th Generation CPU (TDX support required)
-   - Minimum 16GB RAM, 100GB free disk space
-   - BIOS configuration: Enable Intel TDX, VT-x/VT-d, SR-IOV
-   - See [Phala's Hardware Requirements](https://docs.phala.com/dstack/hardware-requirements)
-
-2. **Software Setup:**
-   - Ubuntu 24.04 (recommended)
-   - Dstack SDK installed
-   - Docker support for containerization
-
-3. **Account Setup:**
-   - Phala Cloud account (if using managed service)
-   - Access to TDX-enabled nodes
-
-**Installation Steps:**
-
-1. **Set up Dstack environment** following [Phala's Getting Started Guide](https://docs.phala.com/dstack/getting-started):
-   ```bash
-   # Install build tools (Ubuntu 24.04)
-   sudo apt-get update
-   sudo apt-get install build-essential git
-
-   # Clone meta-dstack repository
-   git clone https://github.com/Phala-Network/meta-dstack
-   cd meta-dstack
-
-   # Follow Intel's TDX enabling guide if needed
-   # https://cc-enabling.trustedservices.intel.com/intel-tdx-enabling-guide/
-   ```
-
-2. **Configure BIOS** (before OS installation):
-   - Enable Intel TDX
-   - Enable Intel VT-x / VT-d
-   - Enable SR-IOV (if available)
-   - Refer to [Intel TDX Enabling Guide](https://cc-enabling.trustedservices.intel.com/intel-tdx-enabling-guide/04/hardware_setup/)
-
-3. **Verify TDX device access** in Dstack environment:
-   ```bash
-   ls -l /dev/tdx-guest
-   # or
-   ls -l /dev/tdx_guest
-
-   # Verify TDX is active
-   cat /sys/firmware/tdx_seam/version
-   ```
-
-4. **Containerize Wulong** for Dstack deployment:
-   ```dockerfile
-   # Dockerfile
-   FROM node:20-slim
-
-   WORKDIR /app
-
-   # Copy application
-   COPY package*.json pnpm-lock.yaml ./
-   COPY dist ./dist
-
-   # Install dependencies
-   RUN npm install -g pnpm && pnpm install --prod
-
-   # Install tdx-attest tools inside container
-   RUN apt-get update && \
-       apt-get install -y wget && \
-       wget https://download.01.org/intel-sgx/latest/linux-latest/distro/ubuntu22.04-server/tdx-attest.deb && \
-       dpkg -i tdx-attest.deb || apt-get install -f -y
-
-   # Generate TLS certificates inside TEE
-   RUN mkdir -p /run/secrets && \
-       openssl req -x509 -newkey rsa:4096 \
-       -keyout /run/secrets/tls.key \
-       -out /run/secrets/tls.cert \
-       -days 365 -nodes \
-       -subj "/CN=wulong.phala.network"
-
-   ENV NODE_ENV=production
-
-   EXPOSE 443
-
-   CMD ["node", "dist/main.js"]
-   ```
-
-5. **Deploy to Phala Cloud** using [Phala Cloud CLI](https://docs.phala.com/phala-cloud/phala-cloud-cli/start-from-cloud-cli):
-   ```bash
-   # Build and push Docker image
-   docker build -t wulong:latest .
-   docker push your-registry/wulong:latest
-
-   # Deploy using Phala Cloud CLI (if using managed service)
-   # or follow Dstack deployment instructions for self-hosted
-   ```
-
-6. **Verify deployment** following the standard [Intel TDX](#intel-tdx) verification steps
-
-**Attestation Integration:**
-
-Phala provides comprehensive attestation capabilities. When running Wulong on Phala:
-
-1. **Wulong's Native Attestation:**
-   - Wulong's `/attestation` endpoint generates standard Intel TDX quotes
-   - Uses `tdx-attest` tool or `/dev/tdx-guest` device access
-   - Returns platform-specific attestation reports
-
-2. **Phala's Attestation Services:**
-   - [Get Attestation](https://docs.phala.com/phala-cloud/attestation/get-attestation) - Dashboard and CLI access to attestation reports
-   - [Verify Your Application](https://docs.phala.com/phala-cloud/attestation/verify-your-application) - Verification methods
-   - [On-chain Verification](https://docs.phala.com/phala-cloud/attestation/overview) - Smart contract verification using Automata's DCAP verifier
-   - CLI command: `phala cvms attestation` to view TEE attestation reports
-
-3. **Verification Options:**
-   - **Smart Contract:** Use Automata's on-chain DCAP verifier (Solidity)
-   - **Intel DCAP:** Standard Intel verification service
-   - **Phala Trust Center:** Automated verification platform
-   - **Custom Integration:** Wulong can integrate with Phala's verification APIs
-
-**Architecture Considerations:**
-
-When deploying on Phala/Dstack:
-
-1. **CVM (Confidential Virtual Machine):**
-   - Dstack creates a TDX-based VM for your application
-   - Hypervisor (QEMU) launches the VM with TDX enabled
-   - Each application gets one CVM with hardware-level isolation
-
-2. **Networking:**
-   - Verify network isolation meets Wulong's security requirements
-   - Configure domains and ports in Dstack build configuration
-   - Consider [TEE-Controlled Domain Certificates](https://docs.phala.com/dstack/design-documents/tee-controlled-domain-certificates)
-
-3. **Trust Model:**
-   - [Decentralized Root-of-Trust](https://docs.phala.com/dstack/design-documents/decentralized-root-of-trust) - Phala's trust architecture
-   - [Dstack Whitepaper](https://docs.phala.com/dstack/design-documents/whitepaper) - Technical design details
-   - Compatible with Wulong's trust assumptions for TDX
-
-**Limitations:**
-
-1. **Intel SGX not supported**: If you need SGX specifically, Wulong would require additional development to support SGX's different attestation APIs (`/dev/sgx_enclave`, `/dev/sgx_provision`)
-
-2. **Platform-specific features**: Phala provides additional services (key management, decentralized verification, on-chain attestation) that may require custom integration beyond Wulong's default KMS integration
-
-3. **GPU TEE**: Wulong does not support [Phala's GPU TEE infrastructure](https://docs.phala.com/phala-cloud/confidential-ai/confidential-gpu/deploy-and-verify) (NVIDIA H100/H200)
-
-4. **Docker requirement**: Wulong must be containerized for Dstack deployment
-
-**Comparison with Other Platforms:**
-
-For platform comparisons, see:
-- [Phala Cloud vs Azure Confidential Computing](https://phala.network/posts/Phala-Cloud-vs-Azure)
-- [Phala's Defense in Depth Solution with TEE](https://phala.com/posts/phalas-defense-in-depth-solution-with-tee)
-
-**Future Support:**
-
-To add Intel SGX support for broader Phala compatibility, Wulong would need:
-- SGX attestation service implementation using Intel SGX SDK
-- Support for EPID or DCAP attestation modes
-- Device access to `/dev/sgx_enclave` and `/dev/sgx_provision`
-- Reference: [How Phala adapted after Intel SGX breach](https://the-scarlet-thread.medium.com/intel-sgx-breach-what-it-means-for-tees-and-how-phala-network-is-adapting-ce918af75319)
-
-**Additional Resources:**
-
-- [Phala Network Overview](https://docs.phala.com/network/overview/phala-network)
-- [Dstack Examples Repository](https://github.com/dstack-tee/dstack-examples)
-- [Phala Cloud FAQ](https://docs.phala.com/phala-cloud/faqs)
-- [Deploy a dApp on Phala Cloud - Step-by-Step Guide](https://phala.com/posts/how-to-deploy-a-dapp-on-phala-cloud-a-stepbystep-guide)
-- [Phala-Intel Partnership](https://phala.com/posts/phala-intel)
-
-For questions about Phala-specific deployment, consult:
-- Phala Network documentation: https://docs.phala.com/
-- Phala GitHub: https://github.com/Phala-Network
-- Dstack GitHub: https://github.com/Dstack-TEE/dstack
-
-## General TEE Configuration
-
-### Environment Variables
-
-Create a production `.env` file inside the TEE:
-
-```bash
-NODE_ENV=production
-PORT=443
-KMS_URL=https://your-kms.example.com/release
-TLS_KEY_PATH=/run/secrets/tls.key
-TLS_CERT_PATH=/run/secrets/tls.cert
-```
-
-### KMS Integration
-
-Configure your Key Management Service to release secrets only after attestation verification:
-
-1. **KMS should verify**:
-   - Platform-specific attestation report signature
-   - Measurement hash matches expected value
-   - Timestamp is recent (within acceptable time window)
-   - Platform is a legitimate TEE (AMD SEV-SNP, Intel TDX, or AWS Nitro)
-
-2. **Expected measurement calculation**:
-   ```bash
-   # For Docker images
-   docker inspect wulong:latest | jq -r '.[0].RootFS.Layers[]' | sha256sum
-
-   # For AWS Nitro
-   cat pcr-values.json | jq -r '.Measurements.PCR0'
-   ```
-
-3. **KMS endpoint example**:
-   ```bash
-   curl -X POST https://your-kms.example.com/release \
-     -H "Content-Type: application/json" \
-     -d '{
-       "attestation_report": "base64-encoded-report",
-       "platform": "amd-sev-snp",
-       "measurement": "hex-measurement"
-     }'
-   ```
-
-## Verification and Testing
-
-### 1. Test Attestation Endpoint
-
-```bash
-# Check if attestation is working
-curl -k https://your-server:443/chest/attestation | jq .
-
-# Expected response:
-# {
-#   "platform": "amd-sev-snp" | "intel-tdx" | "aws-nitro",
-#   "report": "base64-encoded-attestation",
-#   "measurement": "hex-measurement-hash",
-#   "timestamp": "2026-03-17T..."
-# }
-
-# If platform is "none", you're NOT in a TEE
-```
-
-### 2. Verify TLS Termination Inside TEE
-
-```bash
-# Confirm TLS private key never touched the host
-# The key should only exist inside the TEE memory
-# Check host filesystem - key should NOT be there
-sudo find /var /tmp /root -name "tls.key" 2>/dev/null
-
-# Should return no results
-```
-
-### 3. Test Health Endpoints
-
-```bash
-# Health check
-curl -k https://your-server:443/health
-
-# Readiness probe
-curl -k https://your-server:443/health/ready
-
-# Liveness probe
-curl -k https://your-server:443/health/live
-```
-
-### 4. Verify Logging is Sanitized
-
-```bash
-# Check application logs - should NOT contain sensitive data
-# Test by sending a request with sensitive data
-curl -k -X POST https://your-server:443/api/test \
-  -H "Content-Type: application/json" \
-  -d '{"secret": "my-password-123", "data": "sensitive info"}'
-
-# Check logs - should NOT show "my-password-123" or "sensitive info"
-# Only sanitized entries like: "Request received" without actual data
-```
-
-## Security Considerations
-
-### Best Practices
-
-1. **Never share TLS private keys**: Generate certificates inside the TEE, never import from outside
-2. **Verify attestation before sending data**: Clients must verify attestation reports before transmitting sensitive information
-3. **Use secure KMS**: Implement attestation-based key release in your KMS
-4. **Monitor for side-channel attacks**: See [SIDE_CHANNEL_ATTACKS.md](SIDE_CHANNEL_ATTACKS.md) for mitigations
-5. **Regular security updates**: Keep TEE firmware and guest OS patched
-6. **Implement rate limiting**: Protect against DoS attacks (already configured in the app)
-7. **Log monitoring**: Review logs for unusual patterns while ensuring no sensitive data is logged
-
-### Threat Model Reminder
+## Security considerations
 
 **Protected against**:
-- Malicious host operator reading memory
-- Network eavesdropping (TLS terminates in enclave)
+- A malicious host operator reading memory
+- Network eavesdropping (TLS terminates in the enclave)
 - Log-based data exfiltration
-- Stack trace information leakage
 
-**NOT protected against**:
-- Side-channel attacks (timing, cache, power analysis)
-- Physical access to hardware
-- Compromised TEE firmware/hardware
-- Application logic vulnerabilities
-- Social engineering
+**Not protected against**:
+- Side-channel attacks (see [SIDE_CHANNEL_ATTACKS.md](SIDE_CHANNEL_ATTACKS.md))
+- Physical attacks on the hardware
+- Compromised TDX firmware or hardware
+- Application logic bugs
 
-### Trust Assumptions
-
-You MUST trust:
-1. TEE hardware vendor (AMD/Intel/AWS/Phala infrastructure provider)
-2. This application code (verify source and attestation)
-3. KMS that releases secrets
-4. Build process integrity
-5. For Phala/Dstack: The Dstack SDK and hypervisor (QEMU) stack
-
-You do NOT need to trust:
-1. Host OS or cloud provider operator
-2. Network infrastructure
-3. Storage backend (if properly encrypted)
+**You must trust**:
+1. Intel (the TDX module and the quote signing chain)
+2. The dstack OS image, which you can rebuild and measure (MRTD, RTMR0–2)
+3. The app code and compose file, which RTMR3 identifies
+4. The dstack KMS that derives Wulong's keys ([KEY_DERIVATION.md](KEY_DERIVATION.md))
 
 ## Troubleshooting
 
-### Common Issues
+### Startup fails with "No dstack guest agent at /var/run/dstack.sock"
 
-#### "No TEE detected" in production
+The socket is not mounted. `docker-compose.yml` must keep:
 
-**Problem**: Application shows `platform: "none"` in attestation endpoint.
-
-**Solution**:
-```bash
-# Check device files exist
-ls -l /dev/sev-guest /dev/tdx-guest /dev/nsm
-
-# Check kernel modules loaded
-lsmod | grep -E 'sev|tdx|nsm'
-
-# Check BIOS settings - ensure TEE is enabled
-
-# For VMs, ensure launched with proper parameters
+```yaml
+volumes:
+  - /var/run/dstack.sock:/var/run/dstack.sock
 ```
 
-#### Attestation generation fails
+### Startup fails with "The first TDX quote could not be generated"
 
-**Problem**: Error logs show "Failed to generate X attestation".
+The guest agent answered, but the quote failed, did not parse as a TDX v4 quote, or did not carry the requested `report_data`. The logs give the cause.
 
-**Solution**:
-```bash
-# Verify platform tools are installed
-which snpguest  # For AMD SEV-SNP
-which tdx-attest  # For Intel TDX (REQUIRED for production)
-which nitro-cli  # For AWS Nitro
+### `platform` is `none`
 
-# Check permissions
-ls -l /dev/sev-guest  # Should be readable by app user
-ls -l /dev/tdx-guest  # Should be readable by app user
-
-# Test tool directly
-snpguest report /tmp/test.bin  # AMD
-tdx-attest quote /tmp/test.dat  # Intel TDX
-nitro-cli describe-enclaves  # AWS
-```
-
-**Intel TDX Specific Issues**:
-
-**Problem**: "TDX attestation generation failed" errors
-
-**Diagnosis**:
-```bash
-# Check if tdx-attest is installed
-which tdx-attest
-# If not found, install it (see Installation Steps above)
-
-# Check device access
-ls -l /dev/tdx-guest
-# Should show: crw------- or similar
-
-# Test tdx-attest directly
-tdx-attest quote /tmp/test-quote.dat
-# Should succeed without errors
-
-# Check system logs for TDX errors
-dmesg | grep -i tdx
-journalctl -xe | grep -i tdx
-```
-
-**Common TDX issues**:
-1. **`tdx-attest` not installed**: Install the tool (required for production)
-2. **Device permission denied**: Add app user to appropriate group or adjust device permissions
-3. **TDX module not loaded**: Check `lsmod | grep tdx` and ensure kernel supports TDX
-4. **Invalid TDX configuration**: Verify BIOS settings and VM launch parameters
-
-#### TLS certificate errors
-
-**Problem**: "ENOENT: no such file or directory, open '/run/secrets/tls.key'"
-
-**Solution**:
-```bash
-# Ensure secrets directory exists
-mkdir -p /run/secrets
-
-# Generate certificates inside TEE
-openssl req -x509 -newkey rsa:4096 \
-  -keyout /run/secrets/tls.key \
-  -out /run/secrets/tls.cert \
-  -days 365 -nodes \
-  -subj "/CN=your-domain.com"
-
-# Check permissions
-chmod 600 /run/secrets/tls.key
-chmod 644 /run/secrets/tls.cert
-```
-
-#### Performance issues
-
-**Problem**: Application runs slowly inside TEE.
-
-**Solution**:
-```bash
-# Allocate more resources
-# For AMD/Intel VMs: increase vCPUs and memory
-# For AWS Nitro: adjust enclave configuration
-# For Phala/Dstack: adjust CVM resource allocation in deployment config
-
-# Check for side-channel mitigations overhead
-# Some mitigations can impact performance
-
-# Monitor resource usage
-top
-free -h
-```
-
-**Phala/Dstack Specific**:
-- Review [Phala Cloud pricing](https://phala.network/posts/introducing-phala-cloud-pricing-affordable-secure-scalable) for resource tiers
-- Adjust CVM configuration in your deployment
-- Check Dstack build configuration for resource limits
-
-### Getting Help
-
-- Check application logs (sanitized, safe to share)
-- Review platform-specific documentation
-- File issues at the Wulong repository
-- Consult TEE platform vendor support
-
-### Useful Commands Reference
-
-```bash
-# AMD SEV-SNP
-snpguest report /tmp/report.bin
-snpguest verify /tmp/report.bin
-
-# Intel TDX
-tdx-attest quote /tmp/quote.dat
-tdx-attest info
-tdx-attest --version
-
-# AWS Nitro
-nitro-cli describe-enclaves
-nitro-cli console --enclave-id <ID>
-nitro-cli describe-eif --eif-path <path>
-
-# Phala Cloud / Dstack
-phala cvms attestation          # View TEE attestation reports
-phala cvms list                 # List your CVMs
-# See: https://docs.phala.com/phala-cloud/phala-cloud-cli/start-from-cloud-cli
-
-# Wulong Application
-curl -k https://localhost:443/chest/attestation
-curl -k https://localhost:443/health
-NODE_ENV=production node dist/main.js
-
-# Docker (for Phala deployment)
-docker build -t wulong:latest .
-docker push your-registry/wulong:latest
-```
-
-## Next Steps
-
-After successful deployment:
-
-1. **Integrate with your KMS**: Configure attestation-based secret release
-2. **Set up monitoring**: Track attestation verification attempts, error rates
-3. **Implement client verification**: Ensure clients verify attestation before sending data
-4. **Document your deployment**: Record measurement hashes, PCR values for verification
-5. **Plan for updates**: Develop a strategy for updating code while maintaining attestation
-
-For more information:
-- [README.md](../README.md) - General project information
-- [SIDE_CHANNEL_ATTACKS.md](SIDE_CHANNEL_ATTACKS.md) - Side-channel attack mitigations
-- Platform documentation:
-  - [AMD SEV-SNP Documentation](https://www.amd.com/en/developer/sev.html)
-  - [Intel TDX Documentation](https://www.intel.com/content/www/us/en/developer/tools/trust-domain-extensions/overview.html)
-  - [AWS Nitro Enclaves Documentation](https://docs.aws.amazon.com/enclaves/)
-  - [Phala Network Documentation](https://docs.phala.com/)
-  - [Dstack Documentation](https://docs.phala.com/dstack/getting-started)
+You are not in production, and neither the socket nor `DSTACK_SIMULATOR_ENDPOINT` is available. In production this state cannot happen: the app refuses to start.

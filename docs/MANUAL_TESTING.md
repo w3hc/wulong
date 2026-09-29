@@ -262,9 +262,11 @@ Test the TEE attestation endpoint (no authentication required):
 {
   "platform": "none",
   "report": "base64-encoded-string",
-  "measurement": "MOCK-MEASUREMENT-...",
-  "timestamp": "2026-03-18T16:02:48.284Z"
+  "measurements": null,
+  "eventLog": null,
+  "timestamp": "2026-03-18T16:02:48.284Z",
+  ...
 }
 ```
 
-> 💡 In development/test environments, the platform will be "none" with mock data.
+> 💡 Without the dstack socket or simulator, the platform is "none", the report is a placeholder, and `measurements` is `null`. With `DSTACK_SIMULATOR_ENDPOINT` set, it is "intel-tdx" with a simulator quote. Production refuses to start without dstack.

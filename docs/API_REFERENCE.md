@@ -51,11 +51,17 @@ Get a TEE attestation that commits to the server's public keys, so clients can c
 
 ```typescript
 {
-  platform: 'amd-sev-snp' | 'intel-tdx' | 'aws-nitro' | 'phala' | 'none';
-  report: string;            // Base64-encoded attestation report/quote from TEE
-  measurement: string;       // Measurement/hash of the code running in the TEE
+  platform: 'intel-tdx' | 'none'; // 'none' only outside production, without dstack
+  report: string;            // Base64 TDX v4 quote from the dstack guest agent
+  measurements: {            // Hex, read from the quote; null when platform is 'none'
+    mrtd: string;            // dstack OS firmware
+    rtmr0: string;           // Virtual hardware
+    rtmr1: string;           // Kernel
+    rtmr2: string;           // Kernel cmdline and initrd
+    rtmr3: string;           // The app: compose hash, app id, instance id
+  } | null;
+  eventLog: string | null;   // dstack event log (JSON), replays RTMR0-3
   timestamp: string;         // ISO 8601 timestamp when attestation was generated
-  publicKey?: string;        // Public key of the TEE (if applicable)
   mlkemPublicKey: string;    // ML-KEM-1024 public key (base64)
   identityPublicKey: string; // Uncompressed secp256k1 identity public key (hex)
   tlsCertificate?: string;   // Leaf TLS certificate served from inside the enclave (base64 DER)
@@ -70,6 +76,8 @@ Get a TEE attestation that commits to the server's public keys, so clients can c
 
 `reportData` is `SHA-256(LP("wulong-report-v1") || LP(ek) || LP(relayer) || LP(identity_pubkey) || LP(SHA-256(tls_cert)))` followed by the nonce, or 32 zero bytes. `tls_cert` is `tlsCertificate`; check it equals the certificate of your TLS session. The relayer term is empty for now, and the TLS term is empty (and `tlsCertificate` absent) only when TLS terminates outside the enclave. See [KEY_DERIVATION.md](KEY_DERIVATION.md#report_data).
 
+RTMR3 identifies the app; MRTD and RTMR0–2 identify the dstack OS image. See [TEE_SETUP.md](TEE_SETUP.md#measurements) for how to reproduce them.
+
 Returns 503 when the keys have not been derived (development without the dstack simulator).
 
 **Example:**
@@ -82,7 +90,14 @@ curl -k "https://localhost:3000/chest/attestation?nonce=$(openssl rand -hex 32)"
 {
   "platform": "intel-tdx",
   "report": "BAACAIEAAAAAAAAAk5pyM/ecTKmUCg2zlX8GB...",
-  "measurement": "abc123def456...",
+  "measurements": {
+    "mrtd": "c68518a0...",
+    "rtmr0": "85e0855a...",
+    "rtmr1": "9b43f9f3...",
+    "rtmr2": "7cc2dadd...",
+    "rtmr3": "d4e5f6a7..."
+  },
+  "eventLog": "[{\"imr\":0,...}]",
   "timestamp": "2026-09-29T10:30:00.000Z",
   "mlkemPublicKey": "k3VARNFcS4hWl6AfR0DMy...",
   "identityPublicKey": "0x04bd6e22...",
@@ -568,11 +583,11 @@ npm install mlkem siwe ethers
 
 ## Security Best Practices
 
-1. **Always verify attestation** before encrypting secrets
+1. **Always verify attestation** before encrypting secrets: the quote signature, the key binding, and RTMR3 against the value reproduced from the compose file ([TEE_SETUP.md](TEE_SETUP.md#measurements))
    ```typescript
-   const attestation = await fetch('/chest/attestation').then(r => r.json());
-   if (attestation.measurement !== EXPECTED_MEASUREMENT) {
-     throw new Error('Code measurement mismatch!');
+   const attestation = await fetch(`/chest/attestation?nonce=${nonce}`).then(r => r.json());
+   if (attestation.measurements?.rtmr3 !== EXPECTED_RTMR3) {
+     throw new Error('Unexpected app running in the TEE');
    }
    ```
 
