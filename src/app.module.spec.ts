@@ -3,7 +3,6 @@ import { AppModule } from './app.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { SecretsService } from './config/secrets.service';
-import { AttestationController } from './attestation/attestation.controller';
 import { TeePlatformService } from './attestation/tee-platform.service';
 import { HealthController } from './health/health.controller';
 import { AuthController } from './auth/auth.controller';
@@ -24,14 +23,10 @@ describe('AppModule', () => {
     }).compile();
 
     const appController = module.get<AppController>(AppController);
-    const attestationController = module.get<AttestationController>(
-      AttestationController,
-    );
     const healthController = module.get<HealthController>(HealthController);
     const authController = module.get<AuthController>(AuthController);
 
     expect(appController).toBeDefined();
-    expect(attestationController).toBeDefined();
     expect(healthController).toBeDefined();
     expect(authController).toBeDefined();
   });

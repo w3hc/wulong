@@ -5,7 +5,6 @@ import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { SecretsService } from './config/secrets.service';
-import { AttestationController } from './attestation/attestation.controller';
 import { AttestationModule } from './attestation/attestation.module';
 import { HealthController } from './health/health.controller';
 import { validateEnvironment } from './config/env.validation';
@@ -35,7 +34,7 @@ import { TlsModule } from './tls/tls.module';
     SecretModule,
     TlsModule,
   ],
-  controllers: [AppController, AttestationController, HealthController],
+  controllers: [AppController, HealthController],
   providers: [
     AppService,
     SecretsService,
