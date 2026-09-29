@@ -8,10 +8,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Every response takes at least 100 ms plus random jitter, success or error, strips headers that reveal the stack, caches or tracing, and is sent with `Cache-Control: no-store`. Requests lose `User-Agent`, `Referer`, `Accept-Language`, client hints and similar headers before route code sees them. Ported from zk-api, extended to error responses, and keeping the client IP the rate limiter relies on. See [`docs/SIDE_CHANNEL_ATTACKS.md`](docs/SIDE_CHANNEL_ATTACKS.md#what-wulong-does) ([#42](https://github.com/w3hc/wulong/issues/42)).
 - `CORS_ORIGINS`: comma-separated origins of the browser UIs allowed to call the API. Unset allows none; startup fails on an entry that is not an exact origin ([#41](https://github.com/w3hc/wulong/issues/41)).
 
 ### Fixed
 
+- `GET /chest/access/:slot` answered `403` to a non-owner and `404` to a missing slot, so anyone signed in could probe which slots exist. Both now answer `404 Slot not found`, which no longer echoes the slot ([#42](https://github.com/w3hc/wulong/issues/42)).
+- Decryption failures returned the underlying error (`Failed to decrypt secret: …`), and store validation echoed the ciphertext size and the invalid address. Responses now state only the rule; details stay in the server log ([#42](https://github.com/w3hc/wulong/issues/42)).
+- The ML-KEM service rethrew raw errors when `NODE_ENV` was `test`, so tests ran a different path than production. The branch is gone and tests assert the production messages ([#42](https://github.com/w3hc/wulong/issues/42)).
 - CORS combined `origin: '*'` with `credentials: true` in development, which browsers reject, and was disabled in production. Auth uses SIWE headers, not cookies, so credentials mode is gone and origins come from `CORS_ORIGINS` ([#41](https://github.com/w3hc/wulong/issues/41)).
 - `GET /chest/access/:slot` returned plaintext without cache headers. It now sends `Cache-Control: no-store` and `Pragma: no-cache` ([#41](https://github.com/w3hc/wulong/issues/41)).
 - `X-Forwarded-For` handling is tested: ignored when TLS terminates in the enclave, and only the proxy's own hop trusted under `ALLOW_TLS_OUTSIDE_ENCLAVE` ([#41](https://github.com/w3hc/wulong/issues/41)).

@@ -98,7 +98,7 @@ Past a limit, the API answers `429 Too Many Requests`. Once 10,000 nonces are pe
 
 Authentication travels in the `X-SIWE-Message` and `X-SIWE-Signature` headers, never in cookies, so CORS runs without credentials. Browsers may call the API only from the origins listed in `CORS_ORIGINS`, comma-separated as `scheme://host[:port]`, e.g. `https://app.example.com,http://localhost:5173`. Unset, no origin is allowed. Non-browser clients (scripts, servers, mobile apps) are unaffected by CORS.
 
-`GET /chest/access/:slot` returns plaintext and sends `Cache-Control: no-store` and `Pragma: no-cache`.
+`GET /chest/access/:slot` returns plaintext. Every response sends `Cache-Control: no-store` and `Pragma: no-cache`, takes at least 100 ms, and carries no fingerprinting headers. A slot the caller does not own answers `404` like a missing one. See [docs/SIDE_CHANNEL_ATTACKS.md](docs/SIDE_CHANNEL_ATTACKS.md#what-wulong-does).
 
 ## Storage
 

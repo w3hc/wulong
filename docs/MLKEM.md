@@ -926,20 +926,13 @@ The complete production flow on Phala:
 
 **Solution:** Verify client is using `mlkemPublicKey` from `/chest/attestation`
 
-#### "Server public key not found in recipients list"
-
-**Cause:** Client didn't include server as recipient
-
-**Solution:** Pass server's public key to `w3pk.mlkemEncrypt(secret, [serverPublicKey])`
-
 #### "Failed to decrypt secret"
 
-**Possible causes:**
-- Wrong private key on server
-- Corrupted encrypted payload
-- Client used wrong encryption algorithm
+The API returns this one message for every decryption failure, so a response never reveals which step failed. The server log records the cause, for example:
 
-**Debug:** Check server logs for detailed error message
+- `Server public key not found in recipients list`: the client didn't include the server as a recipient. Pass the server's public key to `w3pk.mlkemEncrypt(secret, [serverPublicKey])`
+- `Invalid combined ciphertext size`: corrupted payload
+- an AES-GCM authentication error: wrong private key on the server, corrupted payload, or the client used the wrong algorithm
 
 ### Test Coverage
 
