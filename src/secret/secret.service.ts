@@ -42,12 +42,15 @@ export class SecretService {
    * Stores a multi-recipient encrypted secret and returns a unique slot identifier.
    * @param encryptedPayload Multi-recipient ML-KEM encrypted payload (from w3pk)
    * @param publicAddresses Array of Ethereum addresses that can access this secret (via SIWE)
+   * @param callerAddress The address of the caller (from SIWE authentication)
    * @returns The slot identifier
    * @throws BadRequestException if payload or addresses are invalid
+   * @throws ForbiddenException if caller is not among publicAddresses
    */
   async store(
     encryptedPayload: MultiRecipientEncryptedPayload,
     publicAddresses: string[],
+    callerAddress: string,
   ): Promise<string> {
     // Validate encryption service is available
     if (!this.mlkemEncryptionService.isAvailable()) {
@@ -96,6 +99,15 @@ export class SecretService {
     const normalizedAddresses = publicAddresses.map((addr) =>
       addr.toLowerCase(),
     );
+
+    if (
+      !callerAddress ||
+      !normalizedAddresses.includes(callerAddress.toLowerCase())
+    ) {
+      throw new ForbiddenException(
+        'Store denied: caller must be one of publicAddresses',
+      );
+    }
 
     // Generate unique slot
     const slot = this.generateSlot();
