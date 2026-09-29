@@ -11,6 +11,7 @@ import { TeeExceptionFilter } from './filters/tee-exception.filter';
 import { TeeTlsService } from './tls/tee-tls.service';
 import {
   configureCors,
+  configureResponseHeaders,
   configureTrustProxy,
   parseCorsOrigins,
 } from './http/http-config';
@@ -26,6 +27,7 @@ async function bootstrap() {
   app.use(helmet());
 
   configureCors(app, parseCorsOrigins(process.env.CORS_ORIGINS));
+  configureResponseHeaders(app);
 
   // Global validation pipe - validates all incoming requests
   app.useGlobalPipes(

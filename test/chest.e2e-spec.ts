@@ -413,6 +413,7 @@ describe('Chest Endpoints (e2e)', () => {
         .get(`/chest/access/${nonExistentSlot}`)
         .set('x-siwe-message', Buffer.from(message).toString('base64'))
         .set('x-siwe-signature', signature)
+        .expect('Cache-Control', 'no-store')
         .expect(404, {
           statusCode: 404,
           error: 'Not Found',

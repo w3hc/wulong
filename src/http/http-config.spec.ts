@@ -6,6 +6,7 @@ import request from 'supertest';
 import { App } from 'supertest/types';
 import {
   configureCors,
+  configureResponseHeaders,
   configureTrustProxy,
   parseCorsOrigins,
 } from './http-config';
@@ -137,5 +138,27 @@ describe('configureTrustProxy', () => {
     expect(await ipSeen(false, '198.51.100.1, 203.0.113.7')).toBe(
       '203.0.113.7',
     );
+  });
+});
+
+describe('configureResponseHeaders', () => {
+  it('sends no ETag', async () => {
+    const app = await createApp(configureResponseHeaders);
+    const res = await request(app.getHttpServer() as App)
+      .get('/ping')
+      .expect(200);
+    await app.close();
+
+    expect(res.headers.etag).toBeUndefined();
+  });
+
+  it('would send one otherwise', async () => {
+    const app = await createApp(() => undefined);
+    const res = await request(app.getHttpServer() as App)
+      .get('/ping')
+      .expect(200);
+    await app.close();
+
+    expect(res.headers.etag).toBeDefined();
   });
 });

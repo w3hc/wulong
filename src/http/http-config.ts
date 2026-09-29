@@ -47,3 +47,9 @@ export function configureTrustProxy(
     app.set('trust proxy', 1);
   }
 }
+
+// Express computes ETag while sending the body, after interceptors have run,
+// so MetadataSanitizerInterceptor cannot strip it; it hashes the body besides
+export function configureResponseHeaders(app: NestExpressApplication): void {
+  app.set('etag', false);
+}

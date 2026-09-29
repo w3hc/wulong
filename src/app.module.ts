@@ -12,6 +12,7 @@ import { SecretModule } from './secret/secret.module';
 import { AuthModule } from './auth/auth.module';
 import { TlsModule } from './tls/tls.module';
 import { TimingProtectionInterceptor } from './interceptors/timing-protection.interceptor';
+import { MetadataSanitizerInterceptor } from './interceptors/metadata-sanitizer.interceptor';
 
 @Module({
   imports: [
@@ -41,6 +42,7 @@ import { TimingProtectionInterceptor } from './interceptors/timing-protection.in
     SecretsService,
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_INTERCEPTOR, useClass: TimingProtectionInterceptor },
+    { provide: APP_INTERCEPTOR, useClass: MetadataSanitizerInterceptor },
   ],
   exports: [SecretsService],
 })
