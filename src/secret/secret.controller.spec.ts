@@ -179,23 +179,6 @@ describe('SecretController', () => {
       );
     });
 
-    it('should propagate ForbiddenException if caller is not authorized', async () => {
-      const slot = 'a'.repeat(64);
-      const unauthorizedAddress = '0x70997970C51812dc3A010C7d01b50e0d17dc79C8';
-
-      mockSecretService.access.mockRejectedValue(
-        new ForbiddenException(
-          'Access denied: caller is not an owner of this secret',
-        ),
-      );
-
-      const req = { user: { address: unauthorizedAddress } };
-
-      await expect(controller.access(slot, req)).rejects.toThrow(
-        ForbiddenException,
-      );
-    });
-
     it('should propagate BadRequestException for invalid slot', async () => {
       const slot = '';
       const callerAddress = '0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb';

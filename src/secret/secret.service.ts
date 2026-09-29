@@ -151,8 +151,7 @@ export class SecretService {
    * @param slot The slot identifier
    * @param callerAddress The address of the caller (from SIWE authentication)
    * @returns The decrypted secret (plaintext)
-   * @throws NotFoundException if slot doesn't exist
-   * @throws ForbiddenException if caller is not an owner
+   * @throws NotFoundException if slot doesn't exist or caller is not an owner
    * @throws BadRequestException if decryption fails
    */
   async access(slot: string, callerAddress: string): Promise<string> {
@@ -173,20 +172,13 @@ export class SecretService {
     // Load secret data
     const secretData = await this.loadSecret();
 
-    // Check if slot exists
-    const entry = secretData[slot];
-    if (!entry) {
+    // A slot the caller does not own answers like one that does not exist,
+    // so callers cannot probe which slots are in use
+    const entry = Object.hasOwn(secretData, slot)
+      ? secretData[slot]
+      : undefined;
+    if (!entry?.publicAddresses.includes(callerAddress.toLowerCase())) {
       throw new NotFoundException('Slot not found');
-    }
-
-    // Normalize caller address for comparison
-    const normalizedCaller = callerAddress.toLowerCase();
-
-    // Check if caller is an owner (SIWE authorization)
-    if (!entry.publicAddresses.includes(normalizedCaller)) {
-      throw new ForbiddenException(
-        'Access denied: caller is not an owner of this secret',
-      );
     }
 
     // Decrypt the secret using server's ML-KEM private key

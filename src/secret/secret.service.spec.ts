@@ -516,12 +516,18 @@ describe('SecretService', () => {
       ).rejects.toThrow(new NotFoundException('Slot not found'));
     });
 
-    it('should throw ForbiddenException if caller is not an owner', async () => {
+    it('should throw the same NotFoundException if caller is not an owner', async () => {
       const unauthorizedAddress = '0x70997970C51812dc3A010C7d01b50e0d17dc79C8';
 
       await expect(
         service.access(testSlot, unauthorizedAddress),
-      ).rejects.toThrow(ForbiddenException);
+      ).rejects.toThrow(new NotFoundException('Slot not found'));
+    });
+
+    it('should throw NotFoundException for a slot named after an Object property', async () => {
+      await expect(service.access('__proto__', testAddress)).rejects.toThrow(
+        new NotFoundException('Slot not found'),
+      );
     });
 
     it('should allow access if caller is one of multiple owners', async () => {
