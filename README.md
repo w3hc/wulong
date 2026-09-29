@@ -76,6 +76,18 @@ phala deploy --interactive
 WULONG_URL=https://your-app-id-3000.phala.network pnpm test:store-access
 ```
 
+## Rate Limiting
+
+Every route is rate-limited per client IP, and each route has its own counter:
+
+| Limit | Default | Env var |
+| --- | --- | --- |
+| Requests per route per IP | 10 | `THROTTLE_LIMIT` |
+| Window | 60 s | `THROTTLE_TTL` (ms) |
+| Pending SIWE nonces | 10,000 | — |
+
+Past a limit, the API answers `429 Too Many Requests`. Once 10,000 nonces are pending, `POST /auth/nonce` is rejected until some are used or expire (5 minutes); live nonces are never evicted. In production the client IP is read from `X-Forwarded-For`, set by Phala's proxy.
+
 ## Docs
 
 ### Setup & Deployment

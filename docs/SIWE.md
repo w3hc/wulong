@@ -451,6 +451,7 @@ This SIWE implementation is designed for TEE environments:
 - Nonces **expire after 5 minutes** - Time-limited window
 - Nonces are **cryptographically random** - 32 bytes (256 bits) of entropy
 - Expired nonces are **automatically cleaned up** - Prevents memory bloat
+- Pending nonces are **capped at 10,000** - Past the cap, `POST /auth/nonce` returns 429; live nonces are never evicted
 
 ### Address Verification
 
@@ -460,8 +461,9 @@ This SIWE implementation is designed for TEE environments:
 
 ### Rate Limiting
 
-Protected endpoints (including those with `SiweGuard`) and `/auth/nonce` are protected by the global rate limiter:
-- 10 requests per minute per IP address
+Every route, including `/auth/nonce` and those behind `SiweGuard`, goes through the global rate limiter:
+- 10 requests per minute per route per IP address by default (`THROTTLE_LIMIT`, `THROTTLE_TTL`)
+- Returns 429 past the limit
 - Prevents brute-force attacks and DoS
 
 ### Guard-Based Architecture

@@ -456,19 +456,21 @@ All endpoints return consistent error responses:
 
 ## Rate Limiting
 
-All endpoints are rate-limited to prevent abuse:
+Every route is rate-limited per client IP, with a separate counter per route:
 
-- **Global limit:** 100 requests per minute per IP
-- **Auth endpoints:** 10 requests per minute per IP
-- **Store endpoint:** 50 requests per minute per IP
+- **Default limit:** 10 requests per minute per route per IP (`THROTTLE_LIMIT`, `THROTTLE_TTL` in ms)
+- **SIWE nonces:** at most 10,000 pending at once; past that, `POST /auth/nonce` returns 429 until some are used or expire
 
 **Rate Limit Headers:**
 
 ```
-X-RateLimit-Limit: 100
-X-RateLimit-Remaining: 95
-X-RateLimit-Reset: 1234567890
+X-RateLimit-Limit: 10
+X-RateLimit-Remaining: 7
+X-RateLimit-Reset: 42
+Retry-After: 42
 ```
+
+`Retry-After` is only sent with a 429. `X-RateLimit-Reset` and `Retry-After` are in seconds.
 
 **Rate Limit Exceeded Response:**
 
