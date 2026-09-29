@@ -11,6 +11,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Every response takes at least 100 ms plus random jitter, success or error, strips headers that reveal the stack, caches or tracing, and is sent with `Cache-Control: no-store`. Requests lose `User-Agent`, `Referer`, `Accept-Language`, client hints and similar headers before route code sees them. Ported from zk-api, extended to error responses, and keeping the client IP the rate limiter relies on. See [`docs/SIDE_CHANNEL_ATTACKS.md`](docs/SIDE_CHANNEL_ATTACKS.md#what-wulong-does) ([#42](https://github.com/w3hc/wulong/issues/42)).
 - `CORS_ORIGINS`: comma-separated origins of the browser UIs allowed to call the API. Unset allows none; startup fails on an entry that is not an exact origin ([#41](https://github.com/w3hc/wulong/issues/41)).
 
+### Changed
+
+- ML-KEM payloads carry `version: 2`: each recipient's AES key is wrapped with AES-KW under a key-encryption key derived from the ML-KEM shared secret with HKDF-SHA256 (info `w3pk-mlkem-kek-v2`), so a tampered wrapped key fails at unwrap. Recipient ciphertexts are 1608 bytes. Payloads without a `version` are legacy v1 (XOR-wrapped key) and still decrypt, so stored secrets stay readable. Matches [w3pk#133](https://github.com/w3hc/w3pk/issues/133) ([#43](https://github.com/w3hc/wulong/issues/43)).
+- Decryption requires a 12-byte IV and a 16-byte auth tag; truncated tags were accepted ([#43](https://github.com/w3hc/wulong/issues/43)).
+- The ML-KEM test scripts and [`docs/CLIENT_ENCRYPTION.md`](docs/CLIENT_ENCRYPTION.md) produce v2 payloads ([#43](https://github.com/w3hc/wulong/issues/43)).
+
+### Removed
+
+- The unused legacy single-recipient `encrypt` and `decrypt` methods of the ML-KEM service, which used the raw shared secret as the AES key ([#43](https://github.com/w3hc/wulong/issues/43)).
+
 ### Fixed
 
 - `GET /chest/access/:slot` answered `403` to a non-owner and `404` to a missing slot, so anyone signed in could probe which slots exist. Both now answer `404 Slot not found`, which no longer echoes the slot ([#42](https://github.com/w3hc/wulong/issues/42)).

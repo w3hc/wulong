@@ -1,5 +1,7 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
+  IsIn,
+  IsOptional,
   IsString,
   IsArray,
   IsNotEmpty,
@@ -23,7 +25,7 @@ class RecipientEntry {
 
   @ApiProperty({
     description:
-      'ML-KEM-1024 ciphertext for this recipient (base64, 1600 bytes: 1568 KEM + 32 encrypted AES key)',
+      'ML-KEM-1024 ciphertext for this recipient (base64; v2: 1608 bytes, 1568 KEM + 40 AES-KW wrapped key; v1: 1600 bytes, 1568 KEM + 32 XOR-wrapped key)',
     example: 'k3VARNFcS4hWl6AfR0DMylys...',
   })
   @IsString()
@@ -32,6 +34,16 @@ class RecipientEntry {
 }
 
 class MultiRecipientEncryptedPayload {
+  @ApiPropertyOptional({
+    description:
+      'Payload format version: 2 (HKDF-derived KEK, AES-KW wrapped key). Omit for legacy v1 payloads.',
+    enum: [2],
+    example: 2,
+  })
+  @IsOptional()
+  @IsIn([2])
+  version?: 2;
+
   @ApiProperty({
     description: 'Array of recipients (each can decrypt independently)',
     type: [RecipientEntry],

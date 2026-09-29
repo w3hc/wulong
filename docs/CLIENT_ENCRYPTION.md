@@ -121,31 +121,20 @@ const plaintext = JSON.stringify({
   metadata: 'any additional data'
 });
 
-// Encapsulate with admin's public key
-const [ciphertext, sharedSecret] = mlkem.encap(adminPublicKey);
-
-// Encrypt data with AES-256-GCM using shared secret
 const crypto = window.crypto || require('crypto');
-const iv = crypto.getRandomValues(new Uint8Array(12)); // 96-bit IV
 
-const encoder = new TextEncoder();
-const data = encoder.encode(plaintext);
-
-const key = await crypto.subtle.importKey(
-  'raw',
-  sharedSecret,
-  { name: 'AES-GCM' },
-  false,
+// Random AES-256 data key and 96-bit IV
+const aesKey = await crypto.subtle.generateKey(
+  { name: 'AES-GCM', length: 256 },
+  true, // extractable, so it can be wrapped
   ['encrypt']
 );
+const iv = crypto.getRandomValues(new Uint8Array(12));
 
 const encrypted = await crypto.subtle.encrypt(
-  {
-    name: 'AES-GCM',
-    iv: iv,
-  },
-  key,
-  data
+  { name: 'AES-GCM', iv, tagLength: 128 },
+  aesKey,
+  new TextEncoder().encode(plaintext)
 );
 
 // Extract authentication tag (last 16 bytes)
@@ -153,14 +142,46 @@ const encryptedArray = new Uint8Array(encrypted);
 const encryptedData = encryptedArray.slice(0, -16);
 const authTag = encryptedArray.slice(-16);
 
+// Encapsulate with admin's public key
+const [kemCiphertext, sharedSecret] = mlkem.encap(adminPublicKey);
+
+// Derive the key-encryption key with HKDF-SHA256 and wrap the AES key with AES-KW
+const hkdfKey = await crypto.subtle.importKey('raw', sharedSecret, 'HKDF', false, ['deriveKey']);
+const kek = await crypto.subtle.deriveKey(
+  {
+    name: 'HKDF',
+    hash: 'SHA-256',
+    salt: new Uint8Array(0),
+    info: new TextEncoder().encode('w3pk-mlkem-kek-v2'),
+  },
+  hkdfKey,
+  { name: 'AES-KW', length: 256 },
+  false,
+  ['wrapKey']
+);
+const wrappedKey = new Uint8Array(await crypto.subtle.wrapKey('raw', aesKey, kek, 'AES-KW'));
+
+// Recipient ciphertext: ML-KEM ciphertext (1568) + wrapped AES key (40)
+const recipientCiphertext = new Uint8Array(kemCiphertext.length + wrappedKey.length);
+recipientCiphertext.set(kemCiphertext, 0);
+recipientCiphertext.set(wrappedKey, kemCiphertext.length);
+
 // Prepare payload for server
 const payload = {
-  ciphertext: Buffer.from(ciphertext).toString('base64'),
+  version: 2,
+  recipients: [
+    {
+      publicKey: attestation.mlkemPublicKey,
+      ciphertext: Buffer.from(recipientCiphertext).toString('base64'),
+    },
+  ],
   encryptedData: Buffer.from(encryptedData).toString('base64'),
   iv: Buffer.from(iv).toString('base64'),
   authTag: Buffer.from(authTag).toString('base64'),
 };
 ```
+
+To keep your own copy decryptable, add a recipient entry for your own ML-KEM public key the same way; [w3pk](https://github.com/w3hc/w3pk)'s `mlkemEncrypt` does all of this for you.
 
 ### Step 3: Store Encrypted Secret
 
@@ -176,7 +197,7 @@ const storeResponse = await fetch('https://your-tee-service.com/chest/store', {
     'x-siwe-signature': signature,
   },
   body: JSON.stringify({
-    secret: JSON.stringify(payload),  // Store encrypted payload as string
+    secret: payload,
     publicAddresses: ['0xYourEthereumAddress'],
   }),
 });
@@ -235,12 +256,12 @@ console.log('Password:', decryptedData.password);
 ## Helper Function: Complete Encryption Wrapper
 
 ```typescript
-import { createMlKem1024 } from 'mlkem';
+import { mlkemEncrypt, type EncryptedPayload } from 'w3pk';
 
 export async function encryptForTee(
   plaintext: string,
   teeServiceUrl: string
-): Promise<{ payload: string; adminPublicKey: string }> {
+): Promise<{ payload: EncryptedPayload; adminPublicKey: string }> {
   // Get attestation
   const attestation = await fetch(`${teeServiceUrl}/chest/attestation`).then(r => r.json());
 
@@ -253,43 +274,8 @@ export async function encryptForTee(
   //   throw new Error('Unexpected app running in the TEE!');
   // }
 
-  const adminPublicKey = Buffer.from(attestation.mlkemPublicKey, 'base64');
-
-  // Initialize ML-KEM
-  const mlkem = await createMlKem1024();
-
-  // Encapsulate
-  const [ciphertext, sharedSecret] = mlkem.encap(adminPublicKey);
-
-  // Encrypt with AES-256-GCM
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const encoder = new TextEncoder();
-  const data = encoder.encode(plaintext);
-
-  const key = await crypto.subtle.importKey(
-    'raw',
-    sharedSecret,
-    { name: 'AES-GCM' },
-    false,
-    ['encrypt']
-  );
-
-  const encrypted = await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv: iv },
-    key,
-    data
-  );
-
-  const encryptedArray = new Uint8Array(encrypted);
-  const encryptedData = encryptedArray.slice(0, -16);
-  const authTag = encryptedArray.slice(-16);
-
-  const payload = JSON.stringify({
-    ciphertext: Buffer.from(ciphertext).toString('base64'),
-    encryptedData: Buffer.from(encryptedData).toString('base64'),
-    iv: Buffer.from(iv).toString('base64'),
-    authTag: Buffer.from(authTag).toString('base64'),
-  });
+  // v2 payload: AES-256-GCM data, AES key wrapped per recipient with an HKDF-derived KEK
+  const payload = await mlkemEncrypt(plaintext, attestation.mlkemPublicKey);
 
   return {
     payload,

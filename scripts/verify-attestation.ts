@@ -57,13 +57,13 @@ interface AttestationReport extends Partial<KeyBindingEvidence> {
 // Intel TDX Quote v4 Structure (simplified)
 // Full spec: https://download.01.org/intel-sgx/latest/dcap-latest/linux/docs/Intel_TDX_DCAP_Quoting_Library_API.pdf
 interface TdxQuoteHeader {
-  version: number;       // Offset 0, 2 bytes
+  version: number; // Offset 0, 2 bytes
   attestKeyType: number; // Offset 2, 2 bytes
-  teeType: number;       // Offset 4, 4 bytes (0x00000081 for TDX)
-  qeSvn: number;         // Offset 8, 2 bytes
-  pceSvn: number;        // Offset 10, 2 bytes
-  qeVendorId: Buffer;    // Offset 12, 16 bytes
-  userData: Buffer;      // Offset 28, 20 bytes
+  teeType: number; // Offset 4, 4 bytes (0x00000081 for TDX)
+  qeSvn: number; // Offset 8, 2 bytes
+  pceSvn: number; // Offset 10, 2 bytes
+  qeVendorId: Buffer; // Offset 12, 16 bytes
+  userData: Buffer; // Offset 28, 20 bytes
 }
 
 // Intel Root CA public keys (for basic verification)
@@ -177,7 +177,9 @@ function parseTdxQuoteHeader(quote: Buffer): TdxQuoteHeader {
  * Extract certificate chain from quote
  */
 function extractCertificateChain(quote: Buffer): string[] {
-  const certChainStart = quote.indexOf(Buffer.from('-----BEGIN CERTIFICATE-----'));
+  const certChainStart = quote.indexOf(
+    Buffer.from('-----BEGIN CERTIFICATE-----'),
+  );
 
   if (certChainStart === -1) {
     return [];
@@ -186,7 +188,8 @@ function extractCertificateChain(quote: Buffer): string[] {
   const certSection = quote.subarray(certChainStart).toString('utf-8');
   const certs: string[] = [];
 
-  const certRegex = /-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/g;
+  const certRegex =
+    /-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/g;
   let match;
 
   while ((match = certRegex.exec(certSection)) !== null) {
@@ -245,8 +248,8 @@ function verifyCertificateChain(certs: string[]): boolean {
 
   // Check if any cert fingerprint matches Intel root CA
   const rootCert = parseCertificate(certs[certs.length - 1]);
-  const isIntelRoot = INTEL_ROOT_CA_FINGERPRINTS.some(fp =>
-    rootCert.fingerprint.startsWith(fp.substring(0, 16))
+  const isIntelRoot = INTEL_ROOT_CA_FINGERPRINTS.some((fp) =>
+    rootCert.fingerprint.startsWith(fp.substring(0, 16)),
   );
 
   if (!isIntelRoot) {
@@ -260,7 +263,10 @@ function verifyCertificateChain(certs: string[]): boolean {
 /**
  * Verify timestamp freshness
  */
-function verifyTimestamp(timestamp: string, maxAgeSeconds: number = 300): boolean {
+function verifyTimestamp(
+  timestamp: string,
+  maxAgeSeconds: number = 300,
+): boolean {
   const attestationTime = new Date(timestamp);
   const now = new Date();
   const ageSeconds = (now.getTime() - attestationTime.getTime()) / 1000;
@@ -315,13 +321,21 @@ async function verifyAttestation(source: string) {
       process.exit(1);
     }
     if (!live) {
-      warning('Read from a file: the nonce is taken from reportData, so freshness is not checked');
+      warning(
+        'Read from a file: the nonce is taken from reportData, so freshness is not checked',
+      );
       warning('Read from a file: the TLS session is not checked');
     } else if (!servedCertificate) {
       warning('Fetched over plain http: the TLS session is not checked');
     }
     const failures = verifyKeyBinding(
-      { mlkemPublicKey, identityPublicKey, reportData, keyManifest, tlsCertificate },
+      {
+        mlkemPublicKey,
+        identityPublicKey,
+        reportData,
+        keyManifest,
+        tlsCertificate,
+      },
       {
         nonce: live ? nonce : Buffer.from(reportData.slice(-64), 'hex'),
         quote:
@@ -338,9 +352,13 @@ async function verifyAttestation(source: string) {
     }
     success('report_data commits to the ML-KEM and identity keys');
     if (servedCertificate) {
-      success('TLS terminates in the enclave: the session certificate is the bound one');
+      success(
+        'TLS terminates in the enclave: the session certificate is the bound one',
+      );
     }
-    success(`Key manifest signed by the identity key (app ${keyManifest.manifest.appId})`);
+    success(
+      `Key manifest signed by the identity key (app ${keyManifest.manifest.appId})`,
+    );
     if (attestation.platform === 'intel-tdx') {
       success('The quote carries that report_data');
     }
@@ -382,7 +400,9 @@ async function verifyAttestation(source: string) {
     info(`  TEE type: 0x${header.teeType.toString(16).padStart(8, '0')}`);
 
     if (header.teeType !== 0x00000081) {
-      warning(`Unexpected TEE type. Expected 0x00000081 (TDX), got 0x${header.teeType.toString(16)}`);
+      warning(
+        `Unexpected TEE type. Expected 0x00000081 (TDX), got 0x${header.teeType.toString(16)}`,
+      );
     } else {
       success('TEE type is TDX (0x00000081)');
     }
@@ -404,10 +424,12 @@ async function verifyAttestation(source: string) {
       Object.keys(measurements) as (keyof TdxMeasurements)[]
     ).filter((name) => attestation.measurements?.[name] !== measurements[name]);
     if (mismatched.length > 0) {
-      error(`The returned measurements differ from the quote: ${mismatched.join(', ')}`);
+      error(
+        `The returned measurements differ from the quote: ${mismatched.join(', ')}`,
+      );
       process.exit(1);
     }
-    success('The returned measurements are the quote\'s');
+    success("The returned measurements are the quote's");
     if (!attestation.eventLog) {
       warning('No event log: RTMR3 cannot be replayed');
     }
@@ -439,7 +461,7 @@ async function verifyAttestation(source: string) {
 
     log(`1️⃣  Verify Full Cryptographic Signatures`, 'blue');
     info('');
-    info('   Option A: Use Phala\'s Verification Service (Recommended)');
+    info("   Option A: Use Phala's Verification Service (Recommended)");
     info('   --------------------------------------------------------');
     info('   ```bash');
     info('   curl -X POST https://verifier.phala.network/verify \\');
@@ -448,12 +470,16 @@ async function verifyAttestation(source: string) {
     info('   ```');
     info('   Response: { "valid": true, "tcb_status": "UpToDate", ... }');
     info('');
-    info('   📖 Docs: https://docs.phala.com/phala-cloud/attestation/verify-your-application');
+    info(
+      '   📖 Docs: https://docs.phala.com/phala-cloud/attestation/verify-your-application',
+    );
     info('');
     info('   Option B: Use Intel DCAP Library (Trustless)');
     info('   --------------------------------------------');
     info('   For trustless verification without relying on Phala:');
-    info('   - Install: https://github.com/intel/SGXDataCenterAttestationPrimitives');
+    info(
+      '   - Install: https://github.com/intel/SGXDataCenterAttestationPrimitives',
+    );
     info('   - Verifies the quote signature chain up to Intel Root CA');
     info('   - Requires C/C++ or WASM bindings');
     info('');
@@ -468,33 +494,43 @@ async function verifyAttestation(source: string) {
     info('');
     info('   Check via Intel PCS:');
     info('   ```bash');
-    info('   curl "https://api.trustedservices.intel.com/tdx/certification/v4/tcb?fmspc=YOUR_FMSPC"');
+    info(
+      '   curl "https://api.trustedservices.intel.com/tdx/certification/v4/tcb?fmspc=YOUR_FMSPC"',
+    );
     info('   ```');
-    info('   Or use Phala\'s verifier (includes TCB status in response)');
+    info("   Or use Phala's verifier (includes TCB status in response)");
     info('');
 
     log(`\n3️⃣  Verify Certificate Revocation Lists (CRLs)`, 'blue');
     info('');
     info('   Check if certificates have been revoked:');
     info('   ```bash');
-    info('   # Download Intel\'s CRL');
-    info('   curl "https://certificates.trustedservices.intel.com/IntelSGXRootCA.crl" -o intel-root.crl');
+    info("   # Download Intel's CRL");
+    info(
+      '   curl "https://certificates.trustedservices.intel.com/IntelSGXRootCA.crl" -o intel-root.crl',
+    );
     info('');
     info('   # Parse CRL (requires openssl)');
     info('   openssl crl -inform DER -in intel-root.crl -text -noout');
     info('   ```');
-    info('   ✅ Phala\'s verification service checks CRLs automatically');
+    info("   ✅ Phala's verification service checks CRLs automatically");
     info('');
 
     log(`\n4️⃣  Compare Measurements Against Published Values`, 'blue');
     info('');
 
-    info('   On dstack, RTMR3 identifies the app: it extends the compose hash,');
-    info('   the app id and the instance events. MRTD and RTMR0-2 identify the');
+    info(
+      '   On dstack, RTMR3 identifies the app: it extends the compose hash,',
+    );
+    info(
+      '   the app id and the instance events. MRTD and RTMR0-2 identify the',
+    );
     info('   dstack OS image and should match the published dstack release.');
     info('');
     info('   Replay RTMR3 from the event log and check its compose-hash event');
-    info('   equals sha256 of your app-compose.json: see docs/TEE_SETUP.md#measurements');
+    info(
+      '   equals sha256 of your app-compose.json: see docs/TEE_SETUP.md#measurements',
+    );
     info('');
     info(`   RTMR3: ${measurements.rtmr3}`);
     info('');
@@ -503,8 +539,12 @@ async function verifyAttestation(source: string) {
     info('');
     info('   Add this to your client application:');
     info('   ```typescript');
-    info('   async function verifyServerBeforeSendingSecrets(serverUrl: string) {');
-    info('     const attestation = await fetch(`${serverUrl}/chest/attestation?nonce=${nonce}`)');
+    info(
+      '   async function verifyServerBeforeSendingSecrets(serverUrl: string) {',
+    );
+    info(
+      '     const attestation = await fetch(`${serverUrl}/chest/attestation?nonce=${nonce}`)',
+    );
     info('       .then(r => r.json());');
     info('');
     info('     // Step 1: Check platform');
@@ -513,26 +553,40 @@ async function verifyAttestation(source: string) {
     info('     }');
     info('');
     info('     // Step 2: Verify with Phala');
-    info('     const verification = await fetch("https://verifier.phala.network/verify", {');
+    info(
+      '     const verification = await fetch("https://verifier.phala.network/verify", {',
+    );
     info('       method: "POST",');
     info('       headers: { "Content-Type": "application/json" },');
     info('       body: JSON.stringify({ quote: attestation.report })');
     info('     }).then(r => r.json());');
     info('');
-    info('     if (!verification.valid || verification.tcb_status !== "UpToDate") {');
-    info('       throw new Error(`Attestation failed: ${verification.tcb_status}`);');
+    info(
+      '     if (!verification.valid || verification.tcb_status !== "UpToDate") {',
+    );
+    info(
+      '       throw new Error(`Attestation failed: ${verification.tcb_status}`);',
+    );
     info('     }');
     info('');
-    info('     // Step 3: Compare the app measurement, read from the verified quote');
-    info(`     const EXPECTED_RTMR3 = "${measurements.rtmr3.substring(0, 32)}...";`);
+    info(
+      '     // Step 3: Compare the app measurement, read from the verified quote',
+    );
+    info(
+      `     const EXPECTED_RTMR3 = "${measurements.rtmr3.substring(0, 32)}...";`,
+    );
     info('     if (attestation.measurements.rtmr3 !== EXPECTED_RTMR3) {');
     info('       throw new Error("Unexpected code running in TEE");');
     info('     }');
     info('');
     info('     // Step 4: Check freshness');
-    info('     const age = Date.now() - new Date(attestation.timestamp).getTime();');
+    info(
+      '     const age = Date.now() - new Date(attestation.timestamp).getTime();',
+    );
     info('     if (age > 300000) { // 5 minutes');
-    info('       throw new Error("Attestation too old - possible replay attack");');
+    info(
+      '       throw new Error("Attestation too old - possible replay attack");',
+    );
     info('     }');
     info('');
     info('     return true; // ✅ Safe to send secrets');
@@ -541,17 +595,27 @@ async function verifyAttestation(source: string) {
     info('');
 
     log(`\n📚 Additional Resources:`, 'blue');
-    info('   - Phala Attestation: https://docs.phala.com/phala-cloud/attestation/overview');
-    info('   - Intel TDX Spec: https://www.intel.com/content/www/us/en/developer/articles/technical/intel-trust-domain-extensions.html');
-    info('   - DCAP on GitHub: https://github.com/intel/SGXDataCenterAttestationPrimitives');
+    info(
+      '   - Phala Attestation: https://docs.phala.com/phala-cloud/attestation/overview',
+    );
+    info(
+      '   - Intel TDX Spec: https://www.intel.com/content/www/us/en/developer/articles/technical/intel-trust-domain-extensions.html',
+    );
+    info(
+      '   - DCAP on GitHub: https://github.com/intel/SGXDataCenterAttestationPrimitives',
+    );
     info('   - Wulong TEE Docs: docs/TEE_SETUP.md');
     info('');
 
     log(`\n✅ Basic verification PASSED (Step 0 complete)\n`, 'green');
-    log(`⚠️  Next: Follow steps 1-5 above for production deployment\n`, 'yellow');
-
+    log(
+      `⚠️  Next: Follow steps 1-5 above for production deployment\n`,
+      'yellow',
+    );
   } catch (err) {
-    error(`Verification failed: ${err instanceof Error ? err.message : String(err)}`);
+    error(
+      `Verification failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
     if (err instanceof Error && err.stack) {
       console.error(err.stack);
     }
@@ -566,7 +630,9 @@ if (args.length === 0) {
   console.log('Usage: pnpm tsx scripts/verify-attestation.ts <url-or-file>');
   console.log('');
   console.log('Examples:');
-  console.log('  pnpm tsx scripts/verify-attestation.ts https://your-wulong.phala.network/chest/attestation');
+  console.log(
+    '  pnpm tsx scripts/verify-attestation.ts https://your-wulong.phala.network/chest/attestation',
+  );
   console.log('  pnpm tsx scripts/verify-attestation.ts attestation.json');
   process.exit(1);
 }
