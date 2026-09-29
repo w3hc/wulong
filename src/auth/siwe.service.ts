@@ -3,6 +3,7 @@ import { SiweMessage, generateNonce } from 'siwe';
 
 interface NonceEntry {
   nonce: string;
+  address: string;
   createdAt: number;
 }
 
@@ -14,15 +15,39 @@ export class SiweService {
   // Nonce expires after 5 minutes
   private readonly NONCE_TTL = 5 * 60 * 1000;
 
+  // Tolerated clock drift between the client and the server
+  private readonly CLOCK_SKEW = 30 * 1000;
+
+  // Hosts (with port) of the UIs allowed to request a signature
+  private readonly domains: string[];
+
+  // Origin schemes allowed; EIP-4361 treats a missing scheme as https
+  private readonly schemes: string[];
+
+  constructor() {
+    const domains = (process.env.SIWE_DOMAIN ?? '')
+      .split(',')
+      .map((domain) => domain.trim())
+      .filter(Boolean);
+    if (!domains.length && process.env.NODE_ENV === 'production') {
+      throw new Error('SIWE_DOMAIN must be set in production');
+    }
+    this.domains = domains.length ? domains : ['localhost', 'localhost:3000'];
+    this.schemes =
+      process.env.NODE_ENV === 'production' ? ['https'] : ['https', 'http'];
+  }
+
   /**
    * Generate a cryptographically secure random nonce
+   * bound to the address that will sign with it.
    * Nonces are stored in-memory only (no persistence)
    */
-  generateNonce(): string {
+  generateNonce(address: string): string {
     const nonce = generateNonce();
 
     this.nonces.set(nonce, {
       nonce,
+      address: address.toLowerCase(),
       createdAt: Date.now(),
     });
 
@@ -43,26 +68,48 @@ export class SiweService {
     try {
       const siweMessage = new SiweMessage(message);
 
-      // Verify the signature matches the message
-      const fields = await siweMessage.verify({ signature });
-
-      // Check if nonce exists and is not expired
       const nonceEntry = this.nonces.get(siweMessage.nonce);
       if (!nonceEntry) {
         return null; // Nonce not found or already used
       }
 
-      // Check if nonce is expired
-      const age = Date.now() - nonceEntry.createdAt;
-      if (age > this.NONCE_TTL) {
-        this.nonces.delete(siweMessage.nonce);
+      // Single-use nonce: consumed by any verification attempt
+      this.nonces.delete(siweMessage.nonce);
+
+      const now = Date.now();
+      if (now - nonceEntry.createdAt > this.NONCE_TTL) {
         return null; // Nonce expired
       }
 
-      // Single-use nonce: delete after successful verification
-      this.nonces.delete(siweMessage.nonce);
+      // Issued At must fall between nonce creation and now
+      const issuedAt = Date.parse(siweMessage.issuedAt ?? '');
+      if (
+        Number.isNaN(issuedAt) ||
+        issuedAt < nonceEntry.createdAt - this.CLOCK_SKEW ||
+        issuedAt > now + this.CLOCK_SKEW
+      ) {
+        return null;
+      }
 
-      // Return the verified Ethereum address
+      if (siweMessage.address.toLowerCase() !== nonceEntry.address) {
+        return null; // Nonce issued to another address
+      }
+
+      if (
+        !this.domains.includes(siweMessage.domain) ||
+        !this.schemes.includes(siweMessage.scheme ?? 'https')
+      ) {
+        return null;
+      }
+
+      // Enforces signature, domain, nonce, Expiration Time and Not Before
+      const fields = await siweMessage.verify({
+        signature,
+        domain: siweMessage.domain,
+        nonce: nonceEntry.nonce,
+        time: new Date(now).toISOString(),
+      });
+
       return fields.data.address;
     } catch {
       // Verification failed - don't log the error details in production

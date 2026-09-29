@@ -47,7 +47,7 @@ interface EncryptedPayload {
  */
 async function encryptMultiRecipient(
   plaintext: string,
-  recipientPublicKeys: string[]
+  recipientPublicKeys: string[],
 ): Promise<EncryptedPayload> {
   const mlkem = await createMlKem1024();
 
@@ -68,7 +68,9 @@ async function encryptMultiRecipient(
     const publicKey = Buffer.from(pubKeyBase64, 'base64');
 
     if (publicKey.length !== 1568) {
-      throw new Error(`Invalid ML-KEM public key size: ${publicKey.length} (expected 1568)`);
+      throw new Error(
+        `Invalid ML-KEM public key size: ${publicKey.length} (expected 1568)`,
+      );
     }
 
     const [kemCiphertext, sharedSecret] = mlkem.encap(publicKey);
@@ -97,12 +99,15 @@ async function encryptMultiRecipient(
 }
 
 async function testStoreAndAccess() {
-  console.log('🧪 Testing ML-KEM store and access flow with SIWE authentication\n');
+  console.log(
+    '🧪 Testing ML-KEM store and access flow with SIWE authentication\n',
+  );
 
   const serverUrl = process.env.WULONG_URL || 'http://localhost:3000';
 
   // Use test wallet (same as e2e tests)
-  const testPrivateKey = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80';
+  const testPrivateKey =
+    '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80';
   const wallet = new Wallet(testPrivateKey);
 
   console.log(`🔗 Server: ${serverUrl}`);
@@ -113,7 +118,9 @@ async function testStoreAndAccess() {
     console.log('1️⃣  Getting server attestation...');
     const attestationResponse = await fetch(`${serverUrl}/chest/attestation`);
     if (!attestationResponse.ok) {
-      throw new Error(`Attestation failed: ${attestationResponse.status} ${await attestationResponse.text()}`);
+      throw new Error(
+        `Attestation failed: ${attestationResponse.status} ${await attestationResponse.text()}`,
+      );
     }
 
     const attestation: AttestationResponse = await attestationResponse.json();
@@ -123,18 +130,23 @@ async function testStoreAndAccess() {
     }
 
     console.log(`  ✅ Platform: ${attestation.platform}`);
-    console.log(`  ✅ ML-KEM Public Key: ${attestation.mlkemPublicKey.substring(0, 32)}...`);
+    console.log(
+      `  ✅ ML-KEM Public Key: ${attestation.mlkemPublicKey.substring(0, 32)}...`,
+    );
     if (attestation.publicKey) {
       console.log(`  ✅ Server Ethereum Address: ${attestation.publicKey}`);
     }
-    console.log(`  ⚠️  Measurement: ${attestation.measurement.substring(0, 32)}...`);
+    console.log(
+      `  ⚠️  Measurement: ${attestation.measurement.substring(0, 32)}...`,
+    );
     console.log();
 
     // Step 2: Generate client ML-KEM keypair
     console.log('2️⃣  Generating client ML-KEM keypair...');
     const mlkem = await createMlKem1024();
     const [clientPublicKey, clientPrivateKey] = mlkem.generateKeyPair();
-    const clientPublicKeyBase64 = Buffer.from(clientPublicKey).toString('base64');
+    const clientPublicKeyBase64 =
+      Buffer.from(clientPublicKey).toString('base64');
     console.log(`  ✅ Generated (1568 bytes)\n`);
 
     // Step 3: Encrypt secret
@@ -142,12 +154,14 @@ async function testStoreAndAccess() {
     console.log('3️⃣  Encrypting secret for client + server...');
     console.log(`  📝 Plaintext: "${plaintext}"`);
 
-    const encrypted = await encryptMultiRecipient(
-      plaintext,
-      [clientPublicKeyBase64, attestation.mlkemPublicKey]
-    );
+    const encrypted = await encryptMultiRecipient(plaintext, [
+      clientPublicKeyBase64,
+      attestation.mlkemPublicKey,
+    ]);
 
-    console.log(`  ✅ Encrypted with ${encrypted.recipients.length} recipients\n`);
+    console.log(
+      `  ✅ Encrypted with ${encrypted.recipients.length} recipients\n`,
+    );
 
     // Step 4: Store encrypted secret
     console.log('4️⃣  Storing encrypted secret on server...');
@@ -172,6 +186,8 @@ async function testStoreAndAccess() {
     console.log('5️⃣  Getting nonce for SIWE authentication...');
     const nonceResponse = await fetch(`${serverUrl}/auth/nonce`, {
       method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ address: wallet.address }),
     });
 
     if (!nonceResponse.ok) {
@@ -237,7 +253,9 @@ async function testStoreAndAccess() {
     console.log('  ✅ Server-side decryption working');
     console.log('  ✅ Plaintext matches (end-to-end verified)\n');
 
-    console.log('🎉 All tests passed! Complete store+access flow working correctly.\n');
+    console.log(
+      '🎉 All tests passed! Complete store+access flow working correctly.\n',
+    );
 
     console.log('📋 What was tested:');
     console.log('  • ML-KEM-1024 quantum-resistant encryption');
@@ -245,7 +263,6 @@ async function testStoreAndAccess() {
     console.log('  • SIWE authentication with ethers wallet');
     console.log('  • Server-side ML-KEM decryption in TEE');
     console.log('  • End-to-end data integrity\n');
-
   } catch (error) {
     console.error('\n❌ Test failed:', error);
     console.error('\nTroubleshooting:');
