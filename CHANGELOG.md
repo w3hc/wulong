@@ -12,7 +12,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `SIWE_DOMAIN`: comma-separated list of UI hosts (with port) allowed in SIWE messages. Required in production; defaults to `localhost` and `localhost:3000` elsewhere.
 - `CHEST_PATH`: location of the chest file. Defaults to `<cwd>/chest.json`; `docker-compose.yml` sets it to `/app/data/chest.json` on the `wulong-data` volume.
 - `CHEST_MAX_BYTES`: maximum size of the chest file. Defaults to 50 MB; a store that would exceed it returns 507 and leaves the chest untouched.
-- [`docs/KEY_DERIVATION.md`](docs/KEY_DERIVATION.md): design for deriving the ML-KEM key pair, an identity key and a relayer wallet inside the enclave from the dstack KMS, so that no private key is ever passed through env or stored. Covers attestation binding, verification, on-chain upgrade governance and the remaining trust assumptions. Not implemented yet.
+- [`docs/KEY_DERIVATION.md`](docs/KEY_DERIVATION.md): design for deriving the ML-KEM key pair, an identity key and a relayer wallet inside the enclave from the dstack KMS, so that no private key is ever passed through env or stored. Covers attestation binding, verification, on-chain upgrade governance and the remaining trust assumptions.
+- `DSTACK_SIMULATOR_ENDPOINT`: dstack simulator socket path or URL, from which keys are derived in development. Forbidden in production.
 
 ### Fixed
 
@@ -23,11 +24,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Concurrent `POST /chest/store` calls could overwrite each other and lose secrets. Writes to the chest are now serialized.
 - A crash mid-write could corrupt the whole chest. It is now written to a flushed temp file and renamed into place.
 - Every redeploy wiped all stored secrets, since the chest lived in the container filesystem. It now lives on a named Docker volume.
+- The ML-KEM private key was generated off-box and passed through env, so whoever generated it or could read the deployment env could decrypt every secret. It is now derived at boot inside the enclave from the dstack KMS (v1 `GetKey`), along with an identity key, and never stored or exported. See [`docs/KEY_DERIVATION.md`](docs/KEY_DERIVATION.md).
+- In production, startup now fails if `ADMIN_MLKEM_*`, any `*PRIVATE_KEY`, `*MNEMONIC` or `*SEED` variable, or `DSTACK_SIMULATOR_ENDPOINT` is set, or if keys cannot be derived.
+- Setting `ADMIN_MLKEM_PUBLIC_KEY` no longer skips loading secrets from `KMS_URL`.
 
 ### Changed
 
 - **Breaking:** `POST /chest/store` requires the `x-siwe-message` and `x-siwe-signature` headers. Nonces are single-use, so storing and then accessing takes two sign-ins.
 - **Breaking:** `POST /auth/nonce` takes a JSON body `{ "address": "0x…" }`, and the nonce is only accepted in a message signed by that address.
+- **Breaking:** the server's ML-KEM key changes, and secrets stored under the old env key can no longer be decrypted by the server. No migration is provided.
+- **Breaking:** requires a dstack ≥ 0.6.0 guest agent (`/v1/GetKey`). Development needs the dstack simulator.
 
 - Bump NestJS to 12, including `@nestjs/config` 12 and `@nestjs/swagger` 12.
 - Bump TypeScript to 6.0 and `@types/node` to 26. TypeScript 7 is held back until `typescript-eslint`, `ts-jest` and `@nestjs/swagger` support it.

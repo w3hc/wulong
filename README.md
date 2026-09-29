@@ -39,9 +39,10 @@ cp .env.template .env
 mkdir -p secrets
 openssl req -x509 -newkey rsa:4096 -keyout secrets/tls.key -out secrets/tls.cert -days 365 -nodes -subj "/CN=localhost"
 
-# Generate ML-KEM keypair
-pnpm ts-node scripts/generate-admin-keypair.ts
-# Copy the output keys to your .env file
+# Run the dstack simulator (keys are derived from it, never set in .env)
+# git clone https://github.com/Dstack-TEE/dstack && cd dstack/sdk/simulator
+# ./build.sh && ./dstack-simulator
+export DSTACK_SIMULATOR_ENDPOINT=http://localhost:8090
 
 # Start development server
 pnpm start:dev
