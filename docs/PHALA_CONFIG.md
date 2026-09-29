@@ -73,16 +73,13 @@ services:
     environment:
       - NODE_ENV=${NODE_ENV}
       - KMS_URL=${KMS_URL}
-      - ADMIN_MLKEM_PUBLIC_KEY=${ADMIN_MLKEM_PUBLIC_KEY}
-      - ADMIN_MLKEM_PRIVATE_KEY=${ADMIN_MLKEM_PRIVATE_KEY}
     restart: unless-stopped
 ```
 
 **Important**:
 - The `pull_policy: always` ensures Phala pulls the latest image on every deployment
-- The `/var/run/dstack.sock` volume mount is **required** for TEE attestation to work - without it, your app will run in mock mode
-
-> **Warning**: passing `ADMIN_MLKEM_PRIVATE_KEY` through env means whoever generated it, or can read the deployment env, can decrypt every stored secret. This is being replaced by keys derived inside the enclave; see [KEY_DERIVATION.md](./KEY_DERIVATION.md).
+- The `/var/run/dstack.sock` volume mount is **required**: attestation and key derivation go through it, and production refuses to start without `/v1/GetKey` (dstack ≥ 0.6.0 OS image)
+- Deploy against the **on-chain KMS** (`DstackKms` on Base), not Phala Cloud's default KMS, so the app's allowed code versions are publicly governed; see [KEY_DERIVATION.md](./KEY_DERIVATION.md#what-no-one-can-know-rests-on)
 
 ### .env.prod
 
@@ -91,21 +88,13 @@ Create a local file with your production secrets (used during deployment):
 ```bash
 NODE_ENV=production
 KMS_URL=http://localhost:8001/prpc/PhactoryAPI.GetRuntimeInfo
-ADMIN_MLKEM_PUBLIC_KEY=<your-public-key>
-ADMIN_MLKEM_PRIVATE_KEY=<your-private-key>
 ```
 
 **Important**: Add `.env.prod` to [.gitignore](../.gitignore) to prevent committing secrets.
 
-### Generating ML-KEM Keys
+### ML-KEM Keys
 
-Generate quantum-resistant ML-KEM-1024 keypairs:
-
-```bash
-pnpm ts-node scripts/generate-admin-keypair.ts
-```
-
-Copy the output keys to your `.env.prod` file.
+There are no keys to generate or configure. Wulong derives its ML-KEM-1024 key pair and identity key at boot from the dstack KMS, through `/var/run/dstack.sock`. Every instance of the same app gets the same keys, and no one, including whoever deploys, ever handles them. Startup fails if `ADMIN_MLKEM_*`, any `*PRIVATE_KEY`, `*MNEMONIC` or `*SEED` variable, or `DSTACK_SIMULATOR_ENDPOINT` is set. See [KEY_DERIVATION.md](./KEY_DERIVATION.md).
 
 ## Deployment Process
 
@@ -270,7 +259,7 @@ From [src/config/secrets.service.ts](../src/config/secrets.service.ts:25):
 ```typescript
 // In production, check if secrets are injected as environment variables (Phala Cloud)
 // or if we need to fetch from external KMS
-if (process.env.KMS_URL && !process.env.ADMIN_MLKEM_PUBLIC_KEY) {
+if (process.env.KMS_URL) {
   await this.loadFromKms();
 } else {
   // Load from environment (encrypted secrets in TEE)
@@ -284,7 +273,7 @@ if (process.env.KMS_URL && !process.env.ADMIN_MLKEM_PUBLIC_KEY) {
 The application uses ML-KEM-1024 (NIST FIPS 203) for quantum-resistant encryption:
 
 - **Public key**: Exposed via `/chest/attestation` endpoint
-- **Private key**: Kept secret inside the TEE, never exposed
+- **Private key**: Derived inside the TEE from the dstack KMS at boot, never stored or exposed ([KEY_DERIVATION.md](./KEY_DERIVATION.md))
 - **Security level**: NIST Level 5 (256-bit classical security)
 - **Key sizes**: 1568 bytes (public), 3168 bytes (private)
 
@@ -349,10 +338,9 @@ phala ssh --interactive
 docker logs dstack-wulong-1
 ```
 
-Verify secrets are properly injected:
-```bash
-docker exec dstack-wulong-1 env | grep ADMIN_MLKEM
-```
+Look for a startup error:
+- `... must not be set in production`: remove key material or `DSTACK_SIMULATOR_ENDPOINT` from the env
+- `Key derivation from dstack v1 GetKey failed`: the `dstack.sock` mount is missing, or the OS image predates dstack 0.6.0
 
 ### Attestation returns `"platform": "none"`
 

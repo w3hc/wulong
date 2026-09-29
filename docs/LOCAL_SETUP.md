@@ -31,9 +31,8 @@ Edit `.env` and configure:
 NODE_ENV=development
 KMS_URL=https://your-kms.example.com/release
 
-# ML-KEM-1024 Admin Keypair (quantum-resistant encryption)
-ADMIN_MLKEM_PUBLIC_KEY=<your-public-key>
-ADMIN_MLKEM_PRIVATE_KEY=<your-private-key>
+# dstack simulator, from which the ML-KEM keys are derived
+DSTACK_SIMULATOR_ENDPOINT=http://localhost:8090
 
 # Example app secret — replace with whatever your API needs
 MY_API_KEY=<your-api-key>
@@ -50,26 +49,23 @@ openssl req -x509 -newkey rsa:4096 -keyout secrets/tls.key -out secrets/tls.cert
 
 **Note**: The application uses HTTPS in development mode and HTTP in production (where Phala handles TLS termination).
 
-### 3. Generate ML-KEM Keypair
+### 3. Run the dstack Simulator
 
-Generate quantum-resistant ML-KEM-1024 keypairs:
-
-```bash
-pnpm ts-node scripts/generate-admin-keypair.ts
-```
-
-This will output base64-encoded keys. Copy them to your `.env` file:
+Wulong never reads keys from env: it derives them from the dstack guest agent at boot (see [KEY_DERIVATION.md](./KEY_DERIVATION.md)). Locally, run the [dstack simulator](https://github.com/Dstack-TEE/dstack/tree/master/sdk/simulator) (dstack ≥ 0.6.0):
 
 ```bash
-ADMIN_MLKEM_PUBLIC_KEY=<generated-public-key>
-ADMIN_MLKEM_PRIVATE_KEY=<generated-private-key>
+git clone https://github.com/Dstack-TEE/dstack
+cd dstack/sdk/simulator
+./build.sh
+./dstack-simulator
 ```
 
-**Security Notes**:
-- Keep the private key SECRET
-- The public key is exposed via `/chest/attestation` endpoint
-- Clients encrypt data with the public key
-- Only your server can decrypt with the private key
+Then set `DSTACK_SIMULATOR_ENDPOINT=http://localhost:8090` in `.env`.
+
+**Notes**:
+- The simulator's root key is public, so its keys are for development only. Production refuses to start with `DSTACK_SIMULATOR_ENDPOINT` set.
+- Without the simulator, the server starts with encryption disabled and logs a warning.
+- The public key is exposed via the `/chest/attestation` endpoint
 - ML-KEM-1024 provides quantum-resistant encryption (NIST FIPS 203)
 
 ## Running the Application
@@ -273,11 +269,7 @@ openssl req -x509 -newkey rsa:4096 -keyout secrets/tls.key -out secrets/tls.cert
 
 ### ML-KEM key errors
 
-Ensure your `.env` file has valid base64-encoded keys. Regenerate if needed:
-
-```bash
-pnpm ts-node scripts/generate-admin-keypair.ts
-```
+`dstack v1 GetKey unavailable, encryption disabled` means the simulator is not running or `DSTACK_SIMULATOR_ENDPOINT` is not set. A 404 on `/v1/GetKey` means the simulator predates dstack 0.6.0.
 
 ### TypeScript compilation errors
 

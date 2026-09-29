@@ -334,31 +334,18 @@ const plaintext = await mlkemDecrypt(
 
 ## TEE Integration
 
-### Key Generation (Server Startup)
+### Key Derivation (Server Startup)
+
+The server's ML-KEM-1024 key pair is never generated elsewhere, stored or read from env. `KeyDerivationService` derives it at boot from the dstack KMS (see [KEY_DERIVATION.md](./KEY_DERIVATION.md)):
 
 ```typescript
-// src/encryption/mlkem-encryption.service.ts
-async onModuleInit() {
-  this.mlkem = await createMlKem1024();
-
-  // Load from environment (local) or generate in TEE (production)
-  if (process.env.ADMIN_MLKEM_PRIVATE_KEY) {
-    // Development: load from .env
-    this.privateKey = Buffer.from(
-      process.env.ADMIN_MLKEM_PRIVATE_KEY,
-      'base64'
-    );
-  } else {
-    // Production: generate and seal in TEE
-    const [publicKey, privateKey] = this.mlkem.generateKeyPair();
-    this.publicKey = publicKey;
-    this.privateKey = privateKey;
-
-    // Seal private key in TEE hardware (Phala specific)
-    await this.sealPrivateKey(privateKey);
-  }
-}
+// src/keys/key-derivation.service.ts
+const source = await this.dstack.getKey('wulong/mlkem-1024/v1', 'ed25519');
+const seed = hkdfSync('sha256', source.key, 'wulong', info, 64); // d || z
+const [publicKey, secretKey] = mlkem.deriveKeyPair(seed);
 ```
+
+`MlKemEncryptionService` only gets the public key and a `decapsulate()` capability; the secret key stays inside `KeyDerivationService`.
 
 ### Attestation Response
 
@@ -408,36 +395,23 @@ This section explains how to test the ML-KEM multi-recipient encryption implemen
 
 ### Local Testing (Development)
 
-#### Step 1: Generate Server ML-KEM Keypair
+#### Step 1: Run the dstack Simulator
 
-Generate quantum-resistant keys for the wulong server:
+The server derives its keys from the dstack guest agent. Locally, run the simulator (dstack ≥ 0.6.0):
 
 ```bash
-cd /Users/ju/wulong
-pnpm ts-node scripts/generate-admin-keypair.ts
+git clone https://github.com/Dstack-TEE/dstack
+cd dstack/sdk/simulator
+./build.sh
+./dstack-simulator
 ```
-
-This will output:
-
-```
-✅ Keypair generated successfully!
-
-📋 Add these to your .env file:
-
-ADMIN_MLKEM_PUBLIC_KEY=ZLVMNpXCmEp7vhcylKzGXcx8wVEcaQKI...
-ADMIN_MLKEM_PRIVATE_KEY=82eI7sQLvGEut7Z4RvaF+Ju60Esj/AW/...
-```
-
-**IMPORTANT:** Keep the private key secret! In production TEE, this will be sealed in hardware.
 
 #### Step 2: Configure Environment
 
 Create or update `.env`:
 
 ```bash
-# ML-KEM-1024 Admin Keypair (quantum-resistant encryption)
-ADMIN_MLKEM_PUBLIC_KEY=<paste_public_key_here>
-ADMIN_MLKEM_PRIVATE_KEY=<paste_private_key_here>
+DSTACK_SIMULATOR_ENDPOINT=http://localhost:8090
 ```
 
 #### Step 3: Start Wulong Server
@@ -449,8 +423,8 @@ pnpm start:dev
 The server should log:
 
 ```
-✅ ML-KEM-1024 keys loaded successfully
-Public key: ZLVMNpXCmEp7vhcylKzGXcx8wVEcaQKI... (1568 bytes)
+WARN [KeyDerivationService] Keys derived from the dstack simulator (public root)
+LOG  [KeyDerivationService] Keys derived: ML-KEM-1024 ZLVMNpXCmEp7vhcylKzGXcx8wVEcaQKI..., identity 0x...
 ```
 
 Server will be available at `http://localhost:3000`
@@ -921,9 +895,8 @@ The complete production flow on Phala:
 
 #### Local Testing ✅
 
-- [ ] Generate ML-KEM keypair with `scripts/generate-admin-keypair.ts`
-- [ ] Configure `.env` with generated keys
-- [ ] Start server and verify keys loaded
+- [ ] Run the dstack simulator and set `DSTACK_SIMULATOR_ENDPOINT`
+- [ ] Start server and verify keys derived
 - [ ] Run `scripts/test-mlkem-flow.ts` successfully
 - [ ] Run `scripts/test-store-and-access.ts` successfully
 - [ ] Test with w3pk client (if available)
@@ -977,9 +950,9 @@ The complete production flow on Phala:
 
 ### Troubleshooting
 
-#### "ML-KEM keys not configured"
+#### "dstack v1 GetKey unavailable, encryption disabled"
 
-**Solution:** Run `pnpm ts-node scripts/generate-admin-keypair.ts` and add keys to `.env`
+**Solution:** Start the dstack simulator and set `DSTACK_SIMULATOR_ENDPOINT`. A 404 on `/v1/GetKey` means the simulator predates dstack 0.6.0.
 
 #### "Invalid ML-KEM ciphertext size"
 
@@ -1107,7 +1080,7 @@ A: Re-encrypt without that recipient's public key. The old encrypted data should
 A: No theoretical limit. The data is encrypted with AES-256-GCM, which handles arbitrary sizes.
 
 **Q: How do I rotate keys?**
-A: Generate new ML-KEM keypair, update attestation, re-encrypt all secrets. Old keys should be securely destroyed.
+A: Change the derivation domain (`wulong/mlkem-1024/v1` to `/v2`) in a release that derives both generations and re-encapsulates the server entries inside the enclave. See [KEY_DERIVATION.md](./KEY_DERIVATION.md#rotation).
 
 ## Performance Benchmarks
 

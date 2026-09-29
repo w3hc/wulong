@@ -84,18 +84,11 @@ Production mode uses a multi-stage build to create an optimized image.
    ```bash
    NODE_ENV=production
    KMS_URL=https://your-kms.example.com/release
-   ADMIN_MLKEM_PUBLIC_KEY=<your-public-key>
-   ADMIN_MLKEM_PRIVATE_KEY=<your-private-key>
    ```
 
-2. **Generate ML-KEM keypair** (if not already done):
-   ```bash
-   pnpm ts-node scripts/generate-admin-keypair.ts
-   ```
+   No keys go in this file: the ML-KEM keys are derived inside the enclave from the dstack KMS, and startup fails if key material is found in env (see [KEY_DERIVATION.md](./KEY_DERIVATION.md)).
 
-   Copy the generated keys to `.env.prod`.
-
-3. **Update docker-compose.yml** to use `.env.prod`:
+2. **Update docker-compose.yml** to use `.env.prod`:
    ```yaml
    env_file:
      - .env.prod
@@ -226,12 +219,10 @@ services:
     environment:
       - NODE_ENV=${NODE_ENV}
       - KMS_URL=${KMS_URL}
-      - ADMIN_MLKEM_PUBLIC_KEY=${ADMIN_MLKEM_PUBLIC_KEY}
-      - ADMIN_MLKEM_PRIVATE_KEY=${ADMIN_MLKEM_PRIVATE_KEY}
     restart: unless-stopped
 ```
 
-**Note**: The `/var/run/dstack.sock` volume mount is required when deploying to Phala Network or other DStack-based TEE infrastructure. Without it, the application will run in mock mode.
+**Note**: The `/var/run/dstack.sock` volume mount is required: the ML-KEM keys are derived through it (dstack ≥ 0.6.0), and production refuses to start without it.
 
 ## Troubleshooting
 

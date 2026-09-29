@@ -58,5 +58,23 @@ export function validateEnvironment(config: Record<string, unknown>) {
     );
   }
 
+  if (validatedConfig.NODE_ENV === 'production') {
+    const forbidden = Object.keys(config).filter(isForbiddenInProduction);
+    if (forbidden.length > 0) {
+      throw new Error(
+        `Environment validation failed: ${forbidden.join(', ')} must not be set in production. Keys are derived inside the enclave, see docs/KEY_DERIVATION.md`,
+      );
+    }
+  }
+
   return validatedConfig;
+}
+
+// Key material in env is readable by whoever deploys; the simulator's root is public
+function isForbiddenInProduction(name: string): boolean {
+  return (
+    name.startsWith('ADMIN_MLKEM_') ||
+    name === 'DSTACK_SIMULATOR_ENDPOINT' ||
+    /(PRIVATE_KEY|MNEMONIC|SEED)$/i.test(name)
+  );
 }

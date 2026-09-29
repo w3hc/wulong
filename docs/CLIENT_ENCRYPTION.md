@@ -47,19 +47,7 @@ curl -k https://localhost:3000/chest/attestation | jq .mlkemPublicKey
 
 **If `mlkemPublicKey` is `null`:**
 
-The admin needs to generate and configure ML-KEM keys on the server:
-
-```bash
-# On the TEE server
-pnpm ts-node scripts/generate-admin-keypair.ts
-
-# Add the output to .env file:
-# ADMIN_MLKEM_PUBLIC_KEY=...
-# ADMIN_MLKEM_PRIVATE_KEY=...
-
-# Restart the service
-pnpm start:dev  # or in production: node dist/main.js
-```
+The server could not derive its keys from the dstack guest agent. In production this stops startup, so this only happens in development, when the dstack simulator is not running or `DSTACK_SIMULATOR_ENDPOINT` is not set. See [LOCAL_SETUP.md](./LOCAL_SETUP.md#3-run-the-dstack-simulator).
 
 **Verify the configuration:**
 
@@ -415,7 +403,7 @@ Always use HTTPS to prevent man-in-the-middle attacks on the attestation respons
 
 ### 4. Rotate Keys
 
-The admin's ML-KEM keypair should be rotated periodically. Plan for key rotation:
+The server's ML-KEM key pair is derived in the enclave and rotated by changing its derivation domain in a new release ([KEY_DERIVATION.md](./KEY_DERIVATION.md#rotation)). Plan for key rotation:
 
 ```typescript
 // Check key version in attestation
@@ -451,10 +439,7 @@ if (attestation.keyVersion < MINIMUM_KEY_VERSION) {
 
 ### "ML-KEM encryption not available"
 
-The service hasn't configured ML-KEM keys. Contact the admin to run:
-```bash
-pnpm ts-node scripts/generate-admin-keypair.ts
-```
+The server could not derive its ML-KEM keys from the dstack guest agent (development only; production refuses to start). Start the dstack simulator and set `DSTACK_SIMULATOR_ENDPOINT`.
 
 ### "Code measurement mismatch"
 

@@ -74,10 +74,6 @@ describe('Chest Endpoints (e2e)', () => {
     process.env.KMS_URL = 'http://localhost:3001';
     // Keep the rate limiter out of the way; throttle.e2e-spec.ts covers it
     process.env.THROTTLE_LIMIT = '1000';
-    // Set mock ML-KEM key for testing
-    process.env.MLKEM_PRIVATE_KEY_BASE64 = Buffer.from(
-      new Uint8Array(3168),
-    ).toString('base64');
 
     // Create test wallets
     wallet = new Wallet(

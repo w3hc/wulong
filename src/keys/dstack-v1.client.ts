@@ -1,0 +1,117 @@
+import * as http from 'http';
+import { Injectable } from '@nestjs/common';
+
+export const DSTACK_SOCKET_PATH = '/var/run/dstack.sock';
+
+export type KeyAlgorithm = 'secp256k1' | 'ed25519';
+
+export interface GetKeyResponse {
+  key: Uint8Array;
+  publicKey: Uint8Array;
+  signatureChain: Uint8Array[];
+}
+
+/**
+ * Minimal client for the dstack guest agent v1 API (dstack >= 0.6.0).
+ *
+ * @phala/dstack-sdk 0.5.x only speaks v0, whose GetKey ignores the algorithm
+ * and lets the caller steer the signature chain claim. Wulong's keys are
+ * derived with v1 from day one, see docs/KEY_DERIVATION.md.
+ *
+ * Talks to the unix socket, or to DSTACK_SIMULATOR_ENDPOINT (a socket path
+ * or an http URL) when set.
+ */
+@Injectable()
+export class DstackV1Client {
+  private readonly endpoint: string;
+
+  constructor() {
+    this.endpoint = process.env.DSTACK_SIMULATOR_ENDPOINT || DSTACK_SOCKET_PATH;
+  }
+
+  isSimulator(): boolean {
+    return this.endpoint !== DSTACK_SOCKET_PATH;
+  }
+
+  async getKey(
+    domain: string,
+    algorithm: KeyAlgorithm,
+  ): Promise<GetKeyResponse> {
+    const result = await this.call('/v1/GetKey', { domain, algorithm });
+    if (!Array.isArray(result.signature_chain)) {
+      throw new Error('dstack GetKey returned no signature_chain');
+    }
+    return {
+      key: decodeHex(result.key, 'key'),
+      publicKey: decodeHex(result.public_key, 'public_key'),
+      signatureChain: result.signature_chain.map((link, i) =>
+        decodeHex(link, `signature_chain[${i}]`),
+      ),
+    };
+  }
+
+  private call(
+    path: string,
+    body: object,
+  ): Promise<Record<string, unknown> & { signature_chain?: unknown[] }> {
+    const payload = JSON.stringify(body);
+    const target = this.endpoint.startsWith('http')
+      ? new URL(path, this.endpoint)
+      : null;
+
+    return new Promise((resolve, reject) => {
+      const req = http.request(
+        {
+          ...(target
+            ? {
+                hostname: target.hostname,
+                port: target.port,
+                path: target.pathname,
+              }
+            : { socketPath: this.endpoint, path }),
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Content-Length': Buffer.byteLength(payload),
+          },
+          timeout: 10_000,
+        },
+        (res) => {
+          const chunks: Buffer[] = [];
+          res.on('data', (chunk: Buffer) => chunks.push(chunk));
+          res.on('end', () => {
+            const text = Buffer.concat(chunks).toString('utf-8');
+            if (res.statusCode !== 200) {
+              reject(
+                new Error(`dstack ${path} failed (${res.statusCode}): ${text}`),
+              );
+              return;
+            }
+            try {
+              resolve(JSON.parse(text) as Record<string, unknown>);
+            } catch {
+              reject(new Error(`dstack ${path} returned invalid JSON`));
+            }
+          });
+        },
+      );
+      req.on('timeout', () =>
+        req.destroy(new Error(`dstack ${path} timed out`)),
+      );
+      req.on('error', reject);
+      req.end(payload);
+    });
+  }
+}
+
+// Strict on purpose: Buffer.from(hex) silently truncates at the first bad pair.
+function decodeHex(value: unknown, field: string): Uint8Array {
+  if (typeof value !== 'string') {
+    throw new Error(`dstack returned no ${field}`);
+  }
+  const hex = value.startsWith('0x') ? value.slice(2) : value;
+  if (hex.length % 2 !== 0 || !/^[0-9a-fA-F]*$/.test(hex)) {
+    throw new Error(`dstack returned a malformed ${field}`);
+  }
+  return new Uint8Array(Buffer.from(hex, 'hex'));
+}

@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { createMlKem1024 } from 'mlkem';
+import { KeyDerivationService } from '../keys/key-derivation.service';
 import * as crypto from 'crypto';
 
 /**
@@ -49,60 +49,13 @@ export class MlKemEncryptionService {
   private readonly logger = new Logger(MlKemEncryptionService.name);
   private mlkem: Awaited<ReturnType<typeof createMlKem1024>> | null = null;
   private publicKey: Uint8Array | null = null;
-  private privateKey: Uint8Array | null = null;
 
-  constructor(private readonly configService: ConfigService) {}
+  // Keys are derived in the enclave; this service never holds the private key
+  constructor(private readonly keys: KeyDerivationService) {}
 
-  /**
-   * Initialize the ML-KEM instance and load keys
-   */
   async onModuleInit() {
-    this.logger.log('Initializing ML-KEM-1024 encryption service...');
-
-    // Create ML-KEM instance
     this.mlkem = await createMlKem1024();
-
-    // Load keys from environment
-    const publicKeyBase64 = this.configService.get<string>(
-      'ADMIN_MLKEM_PUBLIC_KEY',
-    );
-    const privateKeyBase64 = this.configService.get<string>(
-      'ADMIN_MLKEM_PRIVATE_KEY',
-    );
-
-    if (!publicKeyBase64 || !privateKeyBase64) {
-      this.logger.warn(
-        'ML-KEM keys not configured. Run: pnpm ts-node scripts/generate-admin-keypair.ts',
-      );
-      return;
-    }
-
-    try {
-      this.publicKey = Buffer.from(publicKeyBase64, 'base64');
-      this.privateKey = Buffer.from(privateKeyBase64, 'base64');
-
-      // Validate key sizes
-      if (this.publicKey.length !== 1568) {
-        throw new Error(
-          `Invalid ML-KEM-1024 public key size: ${this.publicKey.length} (expected 1568)`,
-        );
-      }
-      if (this.privateKey.length !== 3168) {
-        throw new Error(
-          `Invalid ML-KEM-1024 private key size: ${this.privateKey.length} (expected 3168)`,
-        );
-      }
-
-      this.logger.log('✅ ML-KEM-1024 keys loaded successfully');
-      this.logger.log(
-        `Public key: ${publicKeyBase64.substring(0, 32)}... (${this.publicKey.length} bytes)`,
-      );
-    } catch (error) {
-      if (process.env.NODE_ENV !== 'test') {
-        this.logger.error('Failed to load ML-KEM keys:', error);
-      }
-      throw error;
-    }
+    this.publicKey = this.keys.getMlKemPublicKey();
   }
 
   /**
@@ -119,7 +72,7 @@ export class MlKemEncryptionService {
    * Check if encryption is available
    */
   isAvailable(): boolean {
-    return this.mlkem !== null && this.privateKey !== null;
+    return this.mlkem !== null && this.keys.isAvailable();
   }
 
   /**
@@ -129,7 +82,7 @@ export class MlKemEncryptionService {
    * @returns Decrypted plaintext
    */
   decryptMultiRecipient(payload: MultiRecipientEncryptedPayload): string {
-    if (!this.mlkem || !this.privateKey || !this.publicKey) {
+    if (!this.isAvailable() || !this.publicKey) {
       throw new Error('ML-KEM encryption not initialized');
     }
 
@@ -166,7 +119,7 @@ export class MlKemEncryptionService {
       const encryptedAesKey = combinedCiphertext.subarray(kemCiphertextLength);
 
       // Decapsulate to recover shared secret
-      const sharedSecret = this.mlkem.decap(kemCiphertext, this.privateKey);
+      const sharedSecret = this.keys.decapsulate(kemCiphertext);
 
       // XOR-decrypt the AES key using the first 32 bytes of shared secret
       const kek = sharedSecret.subarray(0, 32);
@@ -210,7 +163,7 @@ export class MlKemEncryptionService {
    * @deprecated Use decryptMultiRecipient for new implementations
    */
   decrypt(payload: EncryptedPayload): string {
-    if (!this.mlkem || !this.privateKey) {
+    if (!this.isAvailable()) {
       throw new Error('ML-KEM encryption not initialized');
     }
 
@@ -229,7 +182,7 @@ export class MlKemEncryptionService {
       }
 
       // Decapsulate to recover shared secret
-      const sharedSecret = this.mlkem.decap(ciphertext, this.privateKey);
+      const sharedSecret = this.keys.decapsulate(ciphertext);
 
       // Decrypt data with AES-256-GCM
       const decipher = crypto.createDecipheriv('aes-256-gcm', sharedSecret, iv);

@@ -79,4 +79,30 @@ describe('Environment Validation', () => {
       expect(result.KMS_URL).toBeUndefined();
     });
   });
+
+  describe('key material in production', () => {
+    it.each([
+      'ADMIN_MLKEM_PRIVATE_KEY',
+      'ADMIN_MLKEM_PUBLIC_KEY',
+      'DSTACK_SIMULATOR_ENDPOINT',
+      'RELAYER_PRIVATE_KEY',
+      'WALLET_MNEMONIC',
+    ])('should reject %s', (name) => {
+      const config = { NODE_ENV: 'production', [name]: 'x' };
+
+      expect(() => validateEnvironment(config)).toThrow(
+        `${name} must not be set in production`,
+      );
+    });
+
+    it('should allow key material outside production', () => {
+      const config = {
+        NODE_ENV: 'development',
+        ADMIN_MLKEM_PRIVATE_KEY: 'x',
+        DSTACK_SIMULATOR_ENDPOINT: '/tmp/dstack.sock',
+      };
+
+      expect(() => validateEnvironment(config)).not.toThrow();
+    });
+  });
 });
