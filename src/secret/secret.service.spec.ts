@@ -3,6 +3,7 @@ import {
   BadRequestException,
   NotFoundException,
   ForbiddenException,
+  HttpStatus,
 } from '@nestjs/common';
 import { SecretService } from './secret.service';
 import { TeePlatformService } from '../attestation/tee-platform.service';
@@ -295,6 +296,22 @@ describe('SecretService', () => {
       await expect(
         service.store(createMockEncryptedPayload(), [address], address),
       ).resolves.toEqual(expect.any(String));
+    });
+
+    it('should reject with 507 when the chest would exceed CHEST_MAX_BYTES', async () => {
+      process.env.CHEST_MAX_BYTES = '100';
+      const smallService = new SecretService(
+        mockTeePlatformService as unknown as TeePlatformService,
+        mockMlKemEncryptionService as unknown as MlKemEncryptionService,
+      );
+      delete process.env.CHEST_MAX_BYTES;
+
+      const address = '0xbfbaa5a59e3b6c06aff9c975092b8705f804fa1c';
+      await expect(
+        smallService.store(createMockEncryptedPayload(), [address], address),
+      ).rejects.toMatchObject({ status: HttpStatus.INSUFFICIENT_STORAGE });
+      expect(fs.promises.writeFile).not.toHaveBeenCalled();
+      expect(fs.promises.rename).not.toHaveBeenCalled();
     });
 
     it('should throw error if file write fails', async () => {

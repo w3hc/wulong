@@ -21,6 +21,11 @@ export class EnvironmentVariables {
   @IsInt()
   @Min(1)
   THROTTLE_LIMIT?: number;
+
+  // Maximum size of chest.json, in bytes
+  @IsInt()
+  @Min(1)
+  CHEST_MAX_BYTES?: number;
 }
 
 /**

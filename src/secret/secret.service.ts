@@ -3,6 +3,8 @@ import {
   NotFoundException,
   ForbiddenException,
   BadRequestException,
+  HttpException,
+  HttpStatus,
 } from '@nestjs/common';
 import { isAddress } from 'ethers';
 import * as fs from 'fs';
@@ -20,6 +22,8 @@ interface SecretEntry {
   publicAddresses: string[]; // Authorized SIWE addresses
 }
 
+const DEFAULT_CHEST_MAX_BYTES = 50 * 1024 * 1024;
+
 interface SecretData {
   [slot: string]: SecretEntry;
 }
@@ -30,6 +34,7 @@ interface SecretData {
 @Injectable()
 export class SecretService {
   private readonly secretPath: string;
+  private readonly maxBytes: number;
   private writeQueue: Promise<unknown> = Promise.resolve();
 
   constructor(
@@ -37,6 +42,9 @@ export class SecretService {
     private readonly mlkemEncryptionService: MlKemEncryptionService,
   ) {
     this.secretPath = path.join(process.cwd(), 'chest.json');
+    this.maxBytes = Number(
+      process.env.CHEST_MAX_BYTES ?? DEFAULT_CHEST_MAX_BYTES,
+    );
   }
 
   /**
@@ -257,11 +265,20 @@ export class SecretService {
    * temp file, then renames it over the chest, so a crash never leaves
    * a partially written chest behind.
    * @param data The secret data to save
+   * @throws HttpException (507) if the chest would exceed CHEST_MAX_BYTES
    */
   private async saveSecret(data: SecretData): Promise<void> {
+    const serialized = JSON.stringify(data, null, 2);
+    if (Buffer.byteLength(serialized, 'utf-8') > this.maxBytes) {
+      throw new HttpException(
+        'Secret storage is full',
+        HttpStatus.INSUFFICIENT_STORAGE,
+      );
+    }
+
     const tmpPath = `${this.secretPath}.tmp`;
     try {
-      await fs.promises.writeFile(tmpPath, JSON.stringify(data, null, 2), {
+      await fs.promises.writeFile(tmpPath, serialized, {
         encoding: 'utf-8',
         flush: true,
       });
