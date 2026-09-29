@@ -112,7 +112,8 @@ docker compose up -d
 
 - Uses [Dockerfile](../Dockerfile) (multi-stage build)
 - Builds optimized production bundle
-- Only production dependencies installed
+- Only `dist` and production dependencies, no pnpm
+- Runs as the non-root `node` user, which can only write `/app/data`
 - Sets `NODE_ENV=production`
 - Application available at `http://localhost:3000`
 - Uses HTTP (designed for TLS termination proxy like Phala)
@@ -148,13 +149,53 @@ docker build -t wulong:latest .
 For Phala Cloud or other AMD64 environments (from Apple Silicon):
 
 ```bash
-docker buildx build --platform linux/amd64 -t YOUR_DOCKERHUB_USERNAME/wulong:latest --push .
+docker buildx build --platform linux/amd64 -t wulong:latest .
 ```
 
-Example:
+Images that get deployed are not built by hand: see [Releases](#releases).
+
+## Releases
+
+On dstack, the attestation commits to the compose file, not to the image contents. A mutable tag such as `latest` would let whoever controls the registry ship different code under the same attested compose hash, so `docker-compose.yml` pins the image by digest, and that digest is built in CI from a tagged commit.
+
+### Release → digest → compose hash
+
+1. Push a `v*` tag. [`release.yml`](../.github/workflows/release.yml) builds the image for `linux/amd64`, pushes it to `ghcr.io/w3hc/wulong:<tag>`, attests its build provenance, and adds its digest to the GitHub release notes.
+2. Pin that digest in `docker-compose.yml`:
+   ```yaml
+   image: ghcr.io/w3hc/wulong@sha256:<digest>
+   ```
+3. Deploy. The compose hash, which dstack extends into RTMR3, now commits to that exact image. See [TEE_SETUP.md](./TEE_SETUP.md#reproducing-rtmr3-from-the-compose-file).
+
+### Checking a digest
+
+The build is reproducible: the base image is pinned by digest, dependencies come from the lockfile, pnpm's timestamped state files are removed, and file timestamps are clamped to the tagged commit's time. CI builds every pull request twice and fails if the digests differ. To check a release yourself:
+
 ```bash
-docker buildx build --platform linux/amd64 -t julienberanger/wulong:latest --push .
+git checkout v0.2.0
+export SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
+docker buildx build --platform linux/amd64 --provenance=false --sbom=false \
+  --build-arg SOURCE_DATE_EPOCH \
+  --output type=oci,dest=wulong.tar,rewrite-timestamp=true \
+  --metadata-file metadata.json .
+jq -r '."containerimage.digest"' metadata.json
 ```
+
+It must print the digest in the release notes and in `docker-compose.yml`. The build needs a `docker-container` builder (`docker buildx create --use`). You can also check the provenance attestation:
+
+```bash
+gh attestation verify oci://ghcr.io/w3hc/wulong@sha256:<digest> --repo w3hc/wulong
+```
+
+### Upgrading from a root image
+
+Images before v0.2.0 ran as root, so an existing `wulong-data` volume holds a `chest.json` owned by root, which the `node` user cannot rewrite. Stores then fail with `EACCES`. Hand the volume to `node` (uid 1000) once, before or right after the upgrade:
+
+```bash
+docker run --rm -v wulong-data:/app/data alpine chown -R 1000:1000 /app/data
+```
+
+A fresh volume needs nothing: Docker copies the image's `/app/data`, already owned by `node`.
 
 ## Configuration
 
@@ -210,8 +251,7 @@ version: '3.8'
 
 services:
   wulong:
-    image: julienberanger/wulong:latest
-    pull_policy: always
+    image: ghcr.io/w3hc/wulong@sha256:<digest>
     ports:
       - "3000:3000"
     volumes:

@@ -53,7 +53,7 @@ Quote offsets (TDX v4: a 48-byte header, then the TD report body):
 
 ### Reproducing RTMR3 from the compose file
 
-1. **Compose hash.** Phala Cloud deploys an `app-compose.json` that embeds `docker-compose.yml`, and its compose hash is the SHA-256 of that file. Get it with `phala cvms attestation` or from the dashboard, and check that its `docker_compose_file` is this repository's `docker-compose.yml` at the release you audit, with the image pinned by digest.
+1. **Compose hash.** Phala Cloud deploys an `app-compose.json` that embeds `docker-compose.yml`, and its compose hash is the SHA-256 of that file. Get it with `phala cvms attestation` or from the dashboard, and check that its `docker_compose_file` is this repository's `docker-compose.yml` at the release you audit, with the image pinned by digest. Then check that the digest is the one published for that release, and rebuild it to compare (see [DOCKER.md](./DOCKER.md#checking-a-digest)).
 2. **Replay.** Start from 48 zero bytes, and for each event of `eventLog` whose `imr` is 3, in order, compute `rtmr3 = SHA-384(rtmr3 || event.digest)`. The result must equal `measurements.rtmr3`, and the quote's RTMR3 once its signature is verified.
 3. **Check the events.** Recompute each event's digest from its name and payload. In dstack's v1 format, the digest is `SHA-384(event_type_le32 || ":" || event || ":" || payload)` with `event_type = 0x08000001`; v2 hashes a canonical JSON form (see [`runtime_events.rs`](https://github.com/Dstack-TEE/dstack/blob/master/dstack/cc-eventlog/src/runtime_events.rs)). Then check that the `compose-hash` event's payload is the compose hash from step 1, and that `app-id` is the app you expect.
 

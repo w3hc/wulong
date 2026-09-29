@@ -18,7 +18,7 @@ Phala Cloud provides confidential computing infrastructure using Intel TDX (Trus
    npm install -g @phala/cli
    ```
 
-2. **Docker Hub account** for hosting your container images
+2. **A published release**: images are built in CI and pulled from `ghcr.io/w3hc/wulong`, which must be public (or Phala given registry credentials)
 
 3. **Phala Cloud account** at https://cloud.phala.network
 
@@ -31,22 +31,13 @@ Phala Cloud provides confidential computing infrastructure using Intel TDX (Trus
 
 ### Architecture
 
-Phala Cloud runs on **AMD64/x86_64** architecture. If building on Apple Silicon (ARM64), you must cross-compile:
-
-```bash
-docker buildx build --platform linux/amd64 -t YOUR_DOCKERHUB_USERNAME/wulong:latest --push .
-```
-
-For this project:
-```bash
-docker buildx build --platform linux/amd64 -t julienberanger/wulong:latest --push .
-```
+Phala Cloud runs on **AMD64/x86_64** architecture. The [release workflow](../.github/workflows/release.yml) builds for `linux/amd64` and publishes the image digest in the release notes. Don't push images by hand: see [DOCKER.md](./DOCKER.md#releases).
 
 ### Image Configuration
 
 The [Dockerfile](../Dockerfile) uses a multi-stage build:
 1. **Builder stage**: Compiles TypeScript with all dependencies
-2. **Production stage**: Runs with production dependencies only, starts with `node dist/src/main.js`
+2. **Production stage**: `dist` and production dependencies only, as the non-root `node` user, starts with `node dist/src/main.js`
 
 Key points:
 - Port 3000 serves HTTPS, terminated inside the enclave with a key and certificate issued by the dstack KMS ([src/tls/tee-tls.service.ts](../src/tls/tee-tls.service.ts))
@@ -65,8 +56,7 @@ version: '3.8'
 
 services:
   wulong:
-    image: julienberanger/wulong:latest
-    pull_policy: always  # Force pull latest image on every deployment
+    image: ghcr.io/w3hc/wulong@sha256:<digest>  # From the release notes
     ports:
       - "3000:3000"
     volumes:
@@ -79,7 +69,7 @@ services:
 ```
 
 **Important**:
-- The `pull_policy: always` ensures Phala pulls the latest image on every deployment
+- The image is pinned by digest: the attested compose hash then commits to the exact image, which a tag would not
 - The `/var/run/dstack.sock` volume mount is **required**: attestation and key derivation go through it, and production refuses to start without `/v1/GetKey` (dstack ≥ 0.6.0 OS image)
 - Deploy against the **on-chain KMS** (`DstackKms` on Base), not Phala Cloud's default KMS, so the app's allowed code versions are publicly governed; see [KEY_DERIVATION.md](./KEY_DERIVATION.md#what-no-one-can-know-rests-on)
 
@@ -102,11 +92,7 @@ There are no keys to generate or configure. Wulong derives its ML-KEM-1024 key p
 
 ### Initial Deployment
 
-1. **Build and push Docker image**:
-   ```bash
-   pnpm build
-   docker buildx build --platform linux/amd64 -t julienberanger/wulong:latest --push .
-   ```
+1. **Release the image**: push a `v*` tag, then pin the digest from the release notes in `docker-compose.yml` (see [DOCKER.md](./DOCKER.md#releases)).
 
 2. **Deploy to Phala Cloud**:
    ```bash
@@ -129,13 +115,9 @@ There are no keys to generate or configure. Wulong derives its ML-KEM-1024 key p
 
 To update an existing deployment:
 
-1. **Rebuild and push new image** (use `--no-cache` to force fresh build):
-   ```bash
-   pnpm build
-   docker buildx build --platform linux/amd64 -t julienberanger/wulong:latest --no-cache --push .
-   ```
+1. **Release a new image**: push a `v*` tag and pin the new digest in `docker-compose.yml`. The first upgrade from a pre-v0.2.0 image needs the volume handed to the `node` user, see [DOCKER.md](./DOCKER.md#upgrading-from-a-root-image).
 
-2. **Update deployment** (required to pull new image):
+2. **Update deployment** (a new digest changes the compose hash):
    ```bash
    phala deploy --interactive
    # Select existing CVM to update
@@ -342,11 +324,7 @@ Common issues:
 
 ### "exec format error"
 
-Your Docker image was built for the wrong architecture. Rebuild with:
-
-```bash
-docker buildx build --platform linux/amd64 -t julienberanger/wulong:latest --push .
-```
+The image was built for the wrong architecture. Released images are built for `linux/amd64`: check that `docker-compose.yml` pins a digest from a release.
 
 ### Container keeps restarting
 

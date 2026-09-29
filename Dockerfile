@@ -1,44 +1,46 @@
-FROM node:24-alpine AS builder
+# node:24-alpine, pinned by digest so the same Dockerfile always builds on the same base
+ARG NODE_IMAGE=node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1
+
+FROM ${NODE_IMAGE} AS base
 
 WORKDIR /app
 
-# Copy package files
+# pnpm comes from corepack, at the version and hash pinned in package.json
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+RUN corepack enable
+
 COPY package.json pnpm-lock.yaml ./
 
-# Install pnpm
-RUN npm install -g pnpm@10.23.0
+FROM base AS builder
 
-# Install dependencies
 RUN pnpm install --frozen-lockfile
 
-# Copy source code
 COPY . .
 
-# Build the application
 RUN pnpm build
 
-# Production stage
-FROM node:24-alpine
+FROM base AS prod-deps
+
+# pnpm's state files record the install time, which would make the image digest differ per build
+RUN pnpm install --prod --frozen-lockfile \
+  && rm -f node_modules/.modules.yaml node_modules/.pnpm-workspace-state-v1.json
+
+# Runtime stage: dist and production dependencies only, no pnpm, no root
+FROM ${NODE_IMAGE}
+
+ENV NODE_ENV=production
 
 WORKDIR /app
 
-# Copy package files
-COPY package.json pnpm-lock.yaml ./
-
-# Install pnpm
-RUN npm install -g pnpm@10.23.0
-
-# Install production dependencies only
-RUN pnpm install --prod --frozen-lockfile
-
-# Copy built application from builder
+COPY package.json ./
+COPY --from=prod-deps /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 
-# Persistent chest storage (mounted as a volume in docker-compose.yml)
-RUN mkdir -p /app/data
+# Persistent chest storage (mounted as a volume in docker-compose.yml), the only writable path
+RUN mkdir -p /app/data && chown node:node /app/data
 
-# Expose port
+USER node
+
 EXPOSE 3000
 
-# Start the application
 CMD ["node", "dist/src/main.js"]
