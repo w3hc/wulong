@@ -145,10 +145,6 @@ See: https://docs.phala.com/phala-cloud/attestation/verify-your-application
 
 ## Other Scripts
 
-### `generate-admin-keypair.ts`
-
-Generates an admin keypair for secret management.
-
 ### `test-mlkem-flow.ts`
 
 Tests ML-KEM-1024 quantum-resistant encryption flow.

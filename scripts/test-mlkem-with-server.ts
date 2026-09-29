@@ -334,8 +334,9 @@ async function testMLKEMWithServer() {
     console.error('\n❌ Test failed:', error);
     console.error('\nTroubleshooting:');
     console.error('  - Is wulong server running? (pnpm start:dev)');
-    console.error('  - Are ML-KEM keys configured in .env?');
-    console.error('  - Run: pnpm ts-node scripts/generate-admin-keypair.ts');
+    console.error(
+      '  - Is the dstack simulator running, with DSTACK_SIMULATOR_ENDPOINT set?',
+    );
     process.exit(1);
   }
 }

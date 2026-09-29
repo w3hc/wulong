@@ -10,9 +10,8 @@ services:
     environment:
       - NODE_ENV=development
       - KMS_URL=https://your-kms.example.com/release
-      # ML-KEM keys - generate with: pnpm ts-node scripts/generate-admin-keypair.ts
-      - ADMIN_MLKEM_PUBLIC_KEY=${ADMIN_MLKEM_PUBLIC_KEY}
-      - ADMIN_MLKEM_PRIVATE_KEY=${ADMIN_MLKEM_PRIVATE_KEY}
+      # Keys are derived from the dstack simulator, e.g. http://host.docker.internal:8090
+      - DSTACK_SIMULATOR_ENDPOINT=${DSTACK_SIMULATOR_ENDPOINT}
     volumes:
       - .:/app
       - /app/node_modules
