@@ -3,6 +3,7 @@ import { SiweMessage, generateNonce } from 'siwe';
 
 interface NonceEntry {
   nonce: string;
+  address: string;
   createdAt: number;
 }
 
@@ -33,13 +34,15 @@ export class SiweService {
 
   /**
    * Generate a cryptographically secure random nonce
+   * bound to the address that will sign with it.
    * Nonces are stored in-memory only (no persistence)
    */
-  generateNonce(): string {
+  generateNonce(address: string): string {
     const nonce = generateNonce();
 
     this.nonces.set(nonce, {
       nonce,
+      address: address.toLowerCase(),
       createdAt: Date.now(),
     });
 
@@ -81,6 +84,10 @@ export class SiweService {
         issuedAt > now + this.CLOCK_SKEW
       ) {
         return null;
+      }
+
+      if (siweMessage.address.toLowerCase() !== nonceEntry.address) {
+        return null; // Nonce issued to another address
       }
 
       if (!this.domains.includes(siweMessage.domain)) {

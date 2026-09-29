@@ -3,6 +3,8 @@ import { SiweService } from './siwe.service';
 import { SiweMessage } from 'siwe';
 import { Wallet } from 'ethers';
 
+const ADDRESS = '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266';
+
 describe('SiweService', () => {
   let service: SiweService;
 
@@ -20,18 +22,18 @@ describe('SiweService', () => {
 
   describe('generateNonce', () => {
     it('should generate an alphanumeric string (at least 8 characters)', () => {
-      const nonce = service.generateNonce();
+      const nonce = service.generateNonce(ADDRESS);
       expect(nonce).toMatch(/^[A-Za-z0-9]{8,}$/);
     });
 
     it('should generate unique nonces', () => {
-      const nonce1 = service.generateNonce();
-      const nonce2 = service.generateNonce();
+      const nonce1 = service.generateNonce(ADDRESS);
+      const nonce2 = service.generateNonce(ADDRESS);
       expect(nonce1).not.toBe(nonce2);
     });
 
     it('should store nonce internally', () => {
-      const nonce = service.generateNonce();
+      const nonce = service.generateNonce(ADDRESS);
       // Nonce should be in internal storage (we'll verify through verification)
       expect(nonce).toBeDefined();
     });
@@ -51,7 +53,7 @@ describe('SiweService', () => {
       // Suppress expected error logs from ethers library
       const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation();
 
-      const nonce = service.generateNonce();
+      const nonce = service.generateNonce(ADDRESS);
       const siweMessage = new SiweMessage({
         domain: 'localhost',
         address: wallet.address,
@@ -92,7 +94,7 @@ describe('SiweService', () => {
     });
 
     it('should verify valid signature and return address', async () => {
-      const nonce = service.generateNonce();
+      const nonce = service.generateNonce(ADDRESS);
       const siweMessage = new SiweMessage({
         domain: 'localhost',
         address: wallet.address,
@@ -111,7 +113,7 @@ describe('SiweService', () => {
     });
 
     it('should reject reused nonce (single-use)', async () => {
-      const nonce = service.generateNonce();
+      const nonce = service.generateNonce(ADDRESS);
       const siweMessage = new SiweMessage({
         domain: 'localhost',
         address: wallet.address,
@@ -135,7 +137,7 @@ describe('SiweService', () => {
     });
 
     it('should reject expired nonce', async () => {
-      const nonce = service.generateNonce();
+      const nonce = service.generateNonce(ADDRESS);
 
       // Mock nonce as expired by manipulating time
       // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
@@ -171,7 +173,7 @@ describe('SiweService', () => {
         uri: 'https://localhost:3000',
         version: '1',
         chainId: 1,
-        nonce: service.generateNonce(),
+        nonce: service.generateNonce(ADDRESS),
         issuedAt: new Date().toISOString(),
         ...overrides,
       }).prepareMessage();
@@ -209,6 +211,20 @@ describe('SiweService', () => {
         issuedAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
       });
       expect(await service.verifySignature(message, signature)).toBeNull();
+    });
+
+    it('should reject a nonce issued to another address', async () => {
+      const { message, signature } = await signed({
+        nonce: service.generateNonce(Wallet.createRandom().address),
+      });
+      expect(await service.verifySignature(message, signature)).toBeNull();
+    });
+
+    it('should accept the address in any case', async () => {
+      const { message, signature } = await signed({
+        nonce: service.generateNonce(ADDRESS.toLowerCase()),
+      });
+      expect(await service.verifySignature(message, signature)).toBe(ADDRESS);
     });
 
     it('should consume the nonce on a failed attempt', async () => {
@@ -253,7 +269,7 @@ describe('SiweService', () => {
         uri: `https://${domain}`,
         version: '1',
         chainId: 1,
-        nonce: siwe.generateNonce(),
+        nonce: siwe.generateNonce(wallet.address),
         issuedAt: new Date().toISOString(),
       }).prepareMessage();
       const signature = await wallet.signMessage(message);
@@ -283,7 +299,7 @@ describe('SiweService', () => {
   describe('cleanExpiredNonces', () => {
     it('should clean up expired nonces when generating new nonce', () => {
       // Generate a nonce
-      const nonce1 = service.generateNonce();
+      const nonce1 = service.generateNonce(ADDRESS);
 
       // Access the internal nonces map to manipulate it
       // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
@@ -302,7 +318,7 @@ describe('SiweService', () => {
       expect(nonces.has(nonce1)).toBe(true);
 
       // Generate a new nonce, which should trigger cleanup
-      const nonce2 = service.generateNonce();
+      const nonce2 = service.generateNonce(ADDRESS);
 
       // The expired nonce should now be removed
       expect(nonces.has(nonce1)).toBe(false);

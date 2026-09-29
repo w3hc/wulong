@@ -207,9 +207,9 @@ describe('Chest Endpoints (e2e)', () => {
       slot = (storeResponse.body as { slot: string }).slot;
 
       // Generate a nonce for SIWE authentication
-      const nonceResponse = await request(app.getHttpServer()).post(
-        '/auth/nonce',
-      );
+      const nonceResponse = await request(app.getHttpServer())
+        .post('/auth/nonce')
+        .send({ address: wallet.address });
       nonce = (nonceResponse.body as { nonce: string }).nonce;
     });
 
@@ -275,9 +275,9 @@ describe('Chest Endpoints (e2e)', () => {
 
     it('should return 403 when caller is not an owner', async () => {
       // Generate nonce for wallet2
-      const nonceResponse = await request(app.getHttpServer()).post(
-        '/auth/nonce',
-      );
+      const nonceResponse = await request(app.getHttpServer())
+        .post('/auth/nonce')
+        .send({ address: wallet2.address });
       const nonce2 = (nonceResponse.body as { nonce: string }).nonce;
 
       // Create and sign SIWE message with wallet2 (not an owner)
@@ -336,9 +336,9 @@ describe('Chest Endpoints (e2e)', () => {
       const sharedSlot = (storeResponse.body as { slot: string }).slot;
 
       // First owner accesses
-      const nonce1Response = await request(app.getHttpServer()).post(
-        '/auth/nonce',
-      );
+      const nonce1Response = await request(app.getHttpServer())
+        .post('/auth/nonce')
+        .send({ address: wallet.address });
       const nonce1 = (nonce1Response.body as { nonce: string }).nonce;
 
       const siweMessage1 = new SiweMessage({
@@ -364,9 +364,9 @@ describe('Chest Endpoints (e2e)', () => {
         });
 
       // Second owner accesses
-      const nonce2Response = await request(app.getHttpServer()).post(
-        '/auth/nonce',
-      );
+      const nonce2Response = await request(app.getHttpServer())
+        .post('/auth/nonce')
+        .send({ address: wallet2.address });
       const nonce2 = (nonce2Response.body as { nonce: string }).nonce;
 
       const siweMessage2 = new SiweMessage({
@@ -404,9 +404,9 @@ describe('Chest Endpoints (e2e)', () => {
       const testSlot = (storeResponse.body as { slot: string }).slot;
 
       // Access with checksummed address (from wallet)
-      const nonceResponse = await request(app.getHttpServer()).post(
-        '/auth/nonce',
-      );
+      const nonceResponse = await request(app.getHttpServer())
+        .post('/auth/nonce')
+        .send({ address: wallet.address });
       const testNonce = (nonceResponse.body as { nonce: string }).nonce;
 
       const siweMessage = new SiweMessage({
@@ -450,6 +450,7 @@ describe('Chest Endpoints (e2e)', () => {
       // Step 2: Generate nonce for authentication
       const nonceResponse = await request(app.getHttpServer())
         .post('/auth/nonce')
+        .send({ address: wallet.address })
         .expect(201);
 
       const nonce = (nonceResponse.body as { nonce: string }).nonce;
@@ -502,9 +503,9 @@ describe('Chest Endpoints (e2e)', () => {
       const slot2 = (store2Response.body as { slot: string }).slot;
 
       // Access first secret with wallet1
-      const nonce1Response = await request(app.getHttpServer()).post(
-        '/auth/nonce',
-      );
+      const nonce1Response = await request(app.getHttpServer())
+        .post('/auth/nonce')
+        .send({ address: wallet.address });
       const nonce1 = (nonce1Response.body as { nonce: string }).nonce;
 
       const siweMessage1 = new SiweMessage({
@@ -530,9 +531,9 @@ describe('Chest Endpoints (e2e)', () => {
         });
 
       // Access second secret with wallet2
-      const nonce2Response = await request(app.getHttpServer()).post(
-        '/auth/nonce',
-      );
+      const nonce2Response = await request(app.getHttpServer())
+        .post('/auth/nonce')
+        .send({ address: wallet2.address });
       const nonce2 = (nonce2Response.body as { nonce: string }).nonce;
 
       const siweMessage2 = new SiweMessage({
@@ -558,9 +559,9 @@ describe('Chest Endpoints (e2e)', () => {
         });
 
       // Verify wallet1 cannot access wallet2's secret
-      const nonce3Response = await request(app.getHttpServer()).post(
-        '/auth/nonce',
-      );
+      const nonce3Response = await request(app.getHttpServer())
+        .post('/auth/nonce')
+        .send({ address: wallet.address });
       const nonce3 = (nonce3Response.body as { nonce: string }).nonce;
 
       const siweMessage3 = new SiweMessage({
