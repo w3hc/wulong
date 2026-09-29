@@ -21,6 +21,9 @@ export class SiweService {
   // Hosts (with port) of the UIs allowed to request a signature
   private readonly domains: string[];
 
+  // Origin schemes allowed; EIP-4361 treats a missing scheme as https
+  private readonly schemes: string[];
+
   constructor() {
     const domains = (process.env.SIWE_DOMAIN ?? '')
       .split(',')
@@ -30,6 +33,8 @@ export class SiweService {
       throw new Error('SIWE_DOMAIN must be set in production');
     }
     this.domains = domains.length ? domains : ['localhost', 'localhost:3000'];
+    this.schemes =
+      process.env.NODE_ENV === 'production' ? ['https'] : ['https', 'http'];
   }
 
   /**
@@ -90,7 +95,10 @@ export class SiweService {
         return null; // Nonce issued to another address
       }
 
-      if (!this.domains.includes(siweMessage.domain)) {
+      if (
+        !this.domains.includes(siweMessage.domain) ||
+        !this.schemes.includes(siweMessage.scheme ?? 'https')
+      ) {
         return null;
       }
 

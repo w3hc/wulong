@@ -286,6 +286,39 @@ describe('SiweService', () => {
       expect(await signIn(custom, 'localhost')).toBe(false);
     });
 
+    it('should accept http only outside production', async () => {
+      process.env.SIWE_DOMAIN = 'app.example';
+      const wallet = Wallet.createRandom();
+      const signHttp = async (siwe: SiweService) => {
+        const message = new SiweMessage({
+          scheme: 'http',
+          domain: 'app.example',
+          address: wallet.address,
+          uri: 'http://app.example',
+          version: '1',
+          chainId: 1,
+          nonce: siwe.generateNonce(wallet.address),
+          issuedAt: new Date().toISOString(),
+        }).prepareMessage();
+        const signature = await wallet.signMessage(message);
+        return siwe.verifySignature(message, signature);
+      };
+
+      process.env.NODE_ENV = 'development';
+      expect(await signHttp(new SiweService())).toBe(wallet.address);
+
+      process.env.NODE_ENV = 'production';
+      expect(await signHttp(new SiweService())).toBeNull();
+    });
+
+    it('should accept https or no scheme in production', async () => {
+      process.env.NODE_ENV = 'production';
+      process.env.SIWE_DOMAIN = 'app.example';
+      const custom = new SiweService();
+
+      expect(await signIn(custom, 'app.example')).toBe(true);
+    });
+
     it('should default to localhost with and without port 3000', async () => {
       delete process.env.SIWE_DOMAIN;
       const custom = new SiweService();
