@@ -39,43 +39,72 @@ https://localhost:3000
 
 ### GET /chest/attestation
 
-Get TEE attestation proving the service cannot access user data.
+Get a TEE attestation that commits to the server's public keys, so clients can check that `mlkemPublicKey` is held by the attested code before encrypting to it.
 
 **Authentication:** None (publicly accessible)
+
+**Query:**
+
+- `nonce` (optional): 32 random bytes as hex, with or without `0x`. Placed in `report_data[32..64]`, so a replayed quote is detected. Anything else returns 400.
 
 **Response:**
 
 ```typescript
 {
   platform: 'amd-sev-snp' | 'intel-tdx' | 'aws-nitro' | 'phala' | 'none';
-  report: string;           // Base64-encoded attestation report/quote from TEE
-  measurement: string;      // Measurement/hash of the code running in the TEE
-  timestamp: string;        // ISO 8601 timestamp when attestation was generated
-  publicKey?: string;       // Public key of the TEE (if applicable)
-  mlkemPublicKey?: string;  // ML-KEM-1024 public key for quantum-resistant encryption (base64)
+  report: string;            // Base64-encoded attestation report/quote from TEE
+  measurement: string;       // Measurement/hash of the code running in the TEE
+  timestamp: string;         // ISO 8601 timestamp when attestation was generated
+  publicKey?: string;        // Public key of the TEE (if applicable)
+  mlkemPublicKey: string;    // ML-KEM-1024 public key (base64)
+  identityPublicKey: string; // Uncompressed secp256k1 identity public key (hex)
+  reportData: string;        // The 64 bytes of report_data in the quote (hex)
+  keyManifest: {             // EIP-712 manifest signed by the identity key
+    manifest: { appId: string; mlkemPublicKeyHash: string; relayer: string; epoch: number };
+    signature: string;
+  };
+  identitySignatureChain: string[]; // dstack GetKey signature chain of the identity key (hex)
 }
 ```
+
+`reportData` is `SHA-256(LP("wulong-report-v1") || LP(ek) || LP(relayer) || LP(identity_pubkey) || LP(SHA-256(tls_cert)))` followed by the nonce, or 32 zero bytes. The relayer and TLS certificate terms are empty for now. See [KEY_DERIVATION.md](KEY_DERIVATION.md#report_data).
+
+Returns 503 when the keys have not been derived (development without the dstack simulator).
 
 **Example:**
 
 ```bash
 # Request
-curl -k https://localhost:3000/chest/attestation
+curl -k "https://localhost:3000/chest/attestation?nonce=$(openssl rand -hex 32)"
 
 # Response
 {
   "platform": "intel-tdx",
-  "report": "eyJhdHRlc3RhdGlvbiI6ICIuLi4ifQ==",
+  "report": "BAACAIEAAAAAAAAAk5pyM/ecTKmUCg2zlX8GB...",
   "measurement": "abc123def456...",
-  "timestamp": "2026-03-18T10:30:00.000Z",
-  "mlkemPublicKey": "k3VARNFcS4hWl6AfR0DMy..."
+  "timestamp": "2026-09-29T10:30:00.000Z",
+  "mlkemPublicKey": "k3VARNFcS4hWl6AfR0DMy...",
+  "identityPublicKey": "0x04bd6e22...",
+  "reportData": "0x3f1c...a9e2",
+  "keyManifest": {
+    "manifest": {
+      "appId": "0x1111111111111111111111111111111111111111",
+      "mlkemPublicKeyHash": "0xf148afce...",
+      "relayer": "0x0000000000000000000000000000000000000000",
+      "epoch": 1
+    },
+    "signature": "0x5b0e..."
+  },
+  "identitySignatureChain": ["0x9c1f...", "0x2d7a..."]
 }
 ```
 
-**Use Cases:**
-1. **Verify code integrity** - Compare `measurement` with published source code hash
-2. **Get encryption key** - Use `mlkemPublicKey` to encrypt secrets client-side (quantum-resistant)
-3. **Confirm TEE platform** - Check that service is running in genuine TEE hardware
+**Before encrypting to `mlkemPublicKey`**, verify the quote, then check the binding: `pnpm verify:attestation <url>` does both checks below.
+
+1. Recompute `reportData` from `mlkemPublicKey`, `identityPublicKey` and your nonce, and check it equals the `report_data` inside the quote.
+2. Check `keyManifest` is signed by `identityPublicKey` and that `mlkemPublicKeyHash` is `SHA-256(mlkemPublicKey)`.
+
+Checking `identitySignatureChain` up to the on-chain KMS root, and the measurements, is covered in [KEY_DERIVATION.md](KEY_DERIVATION.md#verification).
 
 **See also:** [Client-Side Encryption Guide](CLIENT_ENCRYPTION.md)
 

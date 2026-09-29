@@ -305,53 +305,40 @@ describe('SecretController', () => {
   });
 
   describe('getAttestation', () => {
-    it('should return attestation report', async () => {
-      const mockAttestation = {
-        platform: 'amd-sev-snp' as const,
-        report: 'base64-encoded-report',
-        measurement: 'abc123measurement',
-        timestamp: '2026-03-18T10:30:00.000Z',
-        publicKey: '0x1234567890abcdef',
-      };
+    const mockAttestation = {
+      platform: 'intel-tdx' as const,
+      report: 'tdx-quote-base64',
+      measurement: 'def456measurement',
+      timestamp: '2026-03-18T10:35:00.000Z',
+      mlkemPublicKey: 'ek-base64',
+      identityPublicKey: '0x04',
+      reportData: '0x00',
+    };
 
+    it('attests without a nonce', async () => {
       mockSecretService.getAttestation.mockResolvedValue(mockAttestation);
 
       const result = await controller.getAttestation();
 
       expect(result).toEqual(mockAttestation);
-      expect(mockSecretService.getAttestation).toHaveBeenCalledTimes(1);
+      expect(mockSecretService.getAttestation).toHaveBeenCalledWith(undefined);
     });
 
-    it('should handle attestation from Intel TDX', async () => {
-      const mockAttestation = {
-        platform: 'intel-tdx' as const,
-        report: 'tdx-quote-base64',
-        measurement: 'def456measurement',
-        timestamp: '2026-03-18T10:35:00.000Z',
-      };
-
+    it('passes the parsed nonce to the service', async () => {
       mockSecretService.getAttestation.mockResolvedValue(mockAttestation);
 
-      const result = await controller.getAttestation();
+      await controller.getAttestation(`0x${'ab'.repeat(32)}`);
 
-      expect(result).toEqual(mockAttestation);
-      expect(result.platform).toBe('intel-tdx');
+      expect(mockSecretService.getAttestation).toHaveBeenCalledWith(
+        Buffer.alloc(32, 0xab),
+      );
     });
 
-    it('should handle mock attestation in non-TEE environment', async () => {
-      const mockAttestation = {
-        platform: 'none' as const,
-        report: 'mock-attestation',
-        measurement: 'MOCK_MEASUREMENT_NOT_SECURE',
-        timestamp: '2026-03-18T10:40:00.000Z',
-      };
-
-      mockSecretService.getAttestation.mockResolvedValue(mockAttestation);
-
-      const result = await controller.getAttestation();
-
-      expect(result).toEqual(mockAttestation);
-      expect(result.platform).toBe('none');
+    it('rejects an invalid nonce', async () => {
+      await expect(controller.getAttestation('abcd')).rejects.toThrow(
+        new BadRequestException('Nonce must be 32 bytes of hex'),
+      );
+      expect(mockSecretService.getAttestation).not.toHaveBeenCalled();
     });
 
     it('should propagate errors from service', async () => {

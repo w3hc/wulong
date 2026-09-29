@@ -6,6 +6,8 @@ import {
   Body,
   UseGuards,
   Req,
+  Query,
+  BadRequestException,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -13,6 +15,7 @@ import {
   ApiResponse,
   ApiSecurity,
   ApiHeader,
+  ApiQuery,
 } from '@nestjs/swagger';
 import { SecretService } from './secret.service';
 import { SiweGuard } from '../auth/siwe.guard';
@@ -20,6 +23,7 @@ import { StoreRequestDto } from './dto/store-request.dto';
 import { StoreResponseDto } from './dto/store-response.dto';
 import { AccessResponseDto } from './dto/access-response.dto';
 import { AttestationResponseDto } from './dto/attestation-response.dto';
+import { parseNonce } from '../attestation/report-data';
 
 @ApiTags('App')
 @Controller('chest')
@@ -132,23 +136,45 @@ export class SecretController {
 
   @Get('attestation')
   @ApiOperation({
-    summary: 'Get TEE attestation with ML-KEM public key',
+    summary: 'Get TEE attestation binding the ML-KEM public key',
     description:
-      'Returns a cryptographic attestation proving that this service is running in a genuine TEE, ' +
-      "along with the server's ML-KEM-1024 public key for quantum-resistant encryption. " +
-      'CRITICAL: Clients MUST verify the attestation before encrypting data! ' +
+      "Returns a TEE attestation whose report_data commits to the server's ML-KEM-1024 and identity public keys " +
+      'and to the client nonce, along with those keys. ' +
+      'CRITICAL: Clients MUST verify the quote and recompute report_data before encrypting data! ' +
       'Use the mlkemPublicKey to encrypt secrets with w3pk.mlkemEncrypt([serverPublicKey]).',
+  })
+  @ApiQuery({
+    name: 'nonce',
+    required: false,
+    description:
+      '32-byte client challenge as hex, placed in report_data[32..64] for freshness',
   })
   @ApiResponse({
     status: 200,
-    description: 'Attestation report with ML-KEM public key',
+    description: 'Attestation report with the committed public keys',
     type: AttestationResponseDto,
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid nonce',
+  })
+  @ApiResponse({
+    status: 503,
+    description: 'Encryption keys are unavailable',
   })
   @ApiResponse({
     status: 500,
     description: 'Failed to generate attestation report',
   })
-  async getAttestation(): Promise<AttestationResponseDto> {
-    return await this.secretService.getAttestation();
+  async getAttestation(
+    @Query('nonce') nonce?: string,
+  ): Promise<AttestationResponseDto> {
+    let parsed: Buffer | undefined;
+    try {
+      parsed = parseNonce(nonce);
+    } catch (error) {
+      throw new BadRequestException((error as Error).message);
+    }
+    return await this.secretService.getAttestation(parsed);
   }
 }

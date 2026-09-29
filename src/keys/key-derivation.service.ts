@@ -5,6 +5,7 @@ import {
   TypedDataEncoder,
   ZeroAddress,
   computeAddress,
+  getBytes,
   hexlify,
   sha256,
 } from 'ethers';
@@ -34,6 +35,11 @@ export interface KeyManifest {
   epoch: number;
 }
 
+export interface SignedKeyManifest {
+  manifest: KeyManifest;
+  signature: string;
+}
+
 type MlKem = Awaited<ReturnType<typeof createMlKem1024>>;
 
 /**
@@ -54,6 +60,7 @@ export class KeyDerivationService implements OnModuleInit {
   private mlkemSecretKey: Uint8Array | null = null;
   private identity: SigningKey | null = null;
   private identitySignatureChain: Uint8Array[] = [];
+  private keyManifest: SignedKeyManifest | null = null;
 
   constructor(private readonly dstack: DstackV1Client) {}
 
@@ -102,11 +109,14 @@ export class KeyDerivationService implements OnModuleInit {
     const signingKey = new SigningKey(hexlify(identity.key));
     identity.key.fill(0);
 
+    const appId = await this.dstack.getAppId();
+
     this.mlkem = mlkem;
     this.mlkemPublicKey = publicKey;
     this.mlkemSecretKey = secretKey;
     this.identity = signingKey;
     this.identitySignatureChain = identity.signatureChain;
+    this.keyManifest = this.signKeyManifest(appId);
   }
 
   isAvailable(): boolean {
@@ -128,21 +138,25 @@ export class KeyDerivationService implements OnModuleInit {
     return this.identity ? computeAddress(this.identity.publicKey) : null;
   }
 
+  /** Uncompressed secp256k1 identity public key, 65 bytes. */
+  getIdentityPublicKey(): Uint8Array | null {
+    return this.identity ? getBytes(this.identity.publicKey) : null;
+  }
+
   getIdentitySignatureChain(): Uint8Array[] {
     return this.identitySignatureChain;
+  }
+
+  /** The key manifest signed at boot, for this CVM's app id. */
+  getKeyManifest(): SignedKeyManifest | null {
+    return this.keyManifest;
   }
 
   /**
    * Signs the EIP-712 key manifest binding Wulong's public keys to its app id.
    * The relayer stays the zero address until the relayer wallet exists.
    */
-  signKeyManifest(
-    appId: string,
-    epoch = 1,
-  ): {
-    manifest: KeyManifest;
-    signature: string;
-  } {
+  signKeyManifest(appId: string, epoch = 1): SignedKeyManifest {
     if (!this.identity || !this.mlkemPublicKey) {
       throw new Error('Keys not derived');
     }

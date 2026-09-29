@@ -1,3 +1,4 @@
+import { SignedKeyManifest } from '../../keys/key-derivation.service';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class AttestationResponseDto {
@@ -35,10 +36,39 @@ export class AttestationResponseDto {
 
   @ApiProperty({
     description:
-      'ML-KEM-1024 public key for quantum-resistant encryption (base64). ' +
-      'Clients can encrypt secrets with this key; only the TEE can decrypt with the private key stored in .env',
-    required: false,
+      'ML-KEM-1024 public key (base64), derived inside the TEE and committed to by reportData. ' +
+      'Clients encrypt secrets to this key after checking the commitment.',
     example: '6RNr8BvBcRe9ivVfuYkN40YCxgE...',
   })
-  mlkemPublicKey?: string;
+  mlkemPublicKey: string;
+
+  @ApiProperty({
+    description:
+      'Uncompressed secp256k1 identity public key (hex), which signs the key manifest',
+    example: '0x04a1b2c3...',
+  })
+  identityPublicKey: string;
+
+  @ApiProperty({
+    description:
+      'The 64 bytes of report_data in the quote (hex): SHA-256 commitment to the public keys, ' +
+      'then the client nonce or zeros. See docs/KEY_DERIVATION.md#report_data.',
+    example: '0xab74ab29...',
+  })
+  reportData: string;
+
+  @ApiProperty({
+    description:
+      'EIP-712 key manifest signed at boot by the identity key: ' +
+      '{ manifest: { appId, mlkemPublicKeyHash, relayer, epoch }, signature }. ' +
+      'Domain { name: "Wulong", version: "1" }.',
+  })
+  keyManifest: SignedKeyManifest;
+
+  @ApiProperty({
+    description:
+      "The identity key's dstack GetKey signature chain (hex), anchored on the KMS root",
+    type: [String],
+  })
+  identitySignatureChain: string[];
 }

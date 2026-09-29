@@ -7,12 +7,15 @@
  *
  * Usage:
  *   pnpm tsx scripts/verify-attestation.ts <attestation-url>
- *   pnpm tsx scripts/verify-attestation.ts https://your-wulong.phala.network/attestation
+ *   pnpm tsx scripts/verify-attestation.ts https://your-wulong.phala.network/chest/attestation
  *
  * Or with local JSON file:
  *   pnpm tsx scripts/verify-attestation.ts attestation.json
  *
  * What it verifies:
+ *   0. Key binding: report_data commits to the returned ML-KEM and identity
+ *      keys and to a fresh nonce, the quote carries that report_data, and the
+ *      key manifest is signed by the identity key (docs/KEY_DERIVATION.md)
  *   1. Platform is Intel TDX (not 'none')
  *   2. Certificate chain signature (Intel root CA)
  *   3. TDX quote structure validity
@@ -23,14 +26,19 @@
  *   - Full cryptographic signature verification
  *   - TCB (Trusted Computing Base) level checks
  *   - Certificate revocation status
+ *   - The GetKey signature chain up to the on-chain KMS root
  *
  * For full verification, use Intel's DCAP library or Phala's verification service.
  */
 
 import * as fs from 'fs';
 import * as crypto from 'crypto';
+import {
+  KeyBindingEvidence,
+  verifyKeyBinding,
+} from '../src/attestation/key-binding';
 
-interface AttestationReport {
+interface AttestationReport extends Partial<KeyBindingEvidence> {
   platform: 'amd-sev-snp' | 'intel-tdx' | 'aws-nitro' | 'none';
   report: string;
   measurement: string;
@@ -101,10 +109,15 @@ function info(message: string) {
 /**
  * Fetch attestation from URL or read from file
  */
-async function fetchAttestation(source: string): Promise<AttestationReport> {
+async function fetchAttestation(
+  source: string,
+  nonce: Buffer,
+): Promise<AttestationReport> {
   if (source.startsWith('http://') || source.startsWith('https://')) {
-    log(`Fetching attestation from: ${source}`, 'blue');
-    const response = await fetch(source);
+    const url = new URL(source);
+    url.searchParams.set('nonce', nonce.toString('hex'));
+    log(`Fetching attestation from: ${url}`, 'blue');
+    const response = await fetch(url);
 
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -273,8 +286,42 @@ async function verifyAttestation(source: string) {
   log('═══════════════════════════════════\n', 'cyan');
 
   try {
-    // 1. Fetch attestation
-    const attestation = await fetchAttestation(source);
+    // 1. Fetch attestation with a fresh nonce, when fetched live
+    const live = source.startsWith('http://') || source.startsWith('https://');
+    const nonce = crypto.randomBytes(32);
+    const attestation = await fetchAttestation(source, nonce);
+
+    // 1b. Check the keys are bound to the quote
+    log(`\n🔑 Key Binding Check:`, 'blue');
+    const { mlkemPublicKey, identityPublicKey, reportData, keyManifest } =
+      attestation;
+    if (!mlkemPublicKey || !identityPublicKey || !reportData || !keyManifest) {
+      error('The attestation carries no key binding (use /chest/attestation)');
+      process.exit(1);
+    }
+    if (!live) {
+      warning('Read from a file: the nonce is taken from reportData, so freshness is not checked');
+    }
+    const failures = verifyKeyBinding(
+      { mlkemPublicKey, identityPublicKey, reportData, keyManifest },
+      {
+        nonce: live ? nonce : Buffer.from(reportData.slice(-64), 'hex'),
+        quote:
+          attestation.platform === 'intel-tdx'
+            ? Buffer.from(attestation.report, 'base64')
+            : undefined,
+      },
+    );
+    if (failures.length > 0) {
+      failures.forEach((failure) => error(failure));
+      error('DO NOT encrypt to this mlkemPublicKey.');
+      process.exit(1);
+    }
+    success('report_data commits to the ML-KEM and identity keys');
+    success(`Key manifest signed by the identity key (app ${keyManifest.manifest.appId})`);
+    if (attestation.platform === 'intel-tdx') {
+      success('The quote carries that report_data');
+    }
 
     // 2. Check platform
     log(`\n🖥️  Platform Check:`, 'blue');
@@ -363,6 +410,7 @@ async function verifyAttestation(source: string) {
     log(`📊 Verification Summary:`, 'cyan');
     log(`═══════════════════════════════════\n`, 'cyan');
 
+    success('Key binding: Valid ✓');
     success('Platform: Intel TDX ✓');
     success('Quote structure: Valid ✓');
     success('Certificate chain: Present ✓');
@@ -477,7 +525,7 @@ async function verifyAttestation(source: string) {
     info('   Add this to your client application:');
     info('   ```typescript');
     info('   async function verifyServerBeforeSendingSecrets(serverUrl: string) {');
-    info('     const attestation = await fetch(`${serverUrl}/attestation`)');
+    info('     const attestation = await fetch(`${serverUrl}/chest/attestation?nonce=${nonce}`)');
     info('       .then(r => r.json());');
     info('');
     info('     // Step 1: Check platform');
@@ -541,7 +589,7 @@ if (args.length === 0) {
   console.log('Usage: pnpm tsx scripts/verify-attestation.ts <url-or-file>');
   console.log('');
   console.log('Examples:');
-  console.log('  pnpm tsx scripts/verify-attestation.ts https://your-wulong.phala.network/attestation');
+  console.log('  pnpm tsx scripts/verify-attestation.ts https://your-wulong.phala.network/chest/attestation');
   console.log('  pnpm tsx scripts/verify-attestation.ts attestation.json');
   process.exit(1);
 }

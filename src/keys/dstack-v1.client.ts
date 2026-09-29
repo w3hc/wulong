@@ -1,5 +1,6 @@
 import * as http from 'http';
 import { Injectable } from '@nestjs/common';
+import { getAddress } from 'ethers';
 
 export const DSTACK_SOCKET_PATH = '/var/run/dstack.sock';
 
@@ -48,6 +49,15 @@ export class DstackV1Client {
         decodeHex(link, `signature_chain[${i}]`),
       ),
     };
+  }
+
+  /** This CVM's app id, from the guest agent's Info. */
+  async getAppId(): Promise<string> {
+    const { app_id: appId } = await this.call('/Info', {});
+    if (typeof appId !== 'string') {
+      throw new Error('dstack Info returned no app_id');
+    }
+    return getAddress(appId.startsWith('0x') ? appId : `0x${appId}`);
   }
 
   private call(

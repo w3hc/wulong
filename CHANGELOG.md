@@ -14,6 +14,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `CHEST_MAX_BYTES`: maximum size of the chest file. Defaults to 50 MB; a store that would exceed it returns 507 and leaves the chest untouched.
 - [`docs/KEY_DERIVATION.md`](docs/KEY_DERIVATION.md): design for deriving the ML-KEM key pair, an identity key and a relayer wallet inside the enclave from the dstack KMS, so that no private key is ever passed through env or stored. Covers attestation binding, verification, on-chain upgrade governance and the remaining trust assumptions.
 - `DSTACK_SIMULATOR_ENDPOINT`: dstack simulator socket path or URL, from which keys are derived in development. Forbidden in production.
+- `GET /chest/attestation?nonce=`: an optional 32-byte hex client nonce, placed in the second half of the quote's `report_data` so replayed quotes are detected.
+- `GET /chest/attestation` returns `identityPublicKey`, `reportData`, the EIP-712 `keyManifest` signed at boot by the identity key, and the identity key's `identitySignatureChain`.
+- `pnpm verify:attestation` checks the key binding: it sends a random nonce, recomputes `report_data`, compares it with the quote, and checks the manifest signer and ML-KEM hash.
 
 ### Fixed
 
@@ -27,6 +30,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - The ML-KEM private key was generated off-box and passed through env, so whoever generated it or could read the deployment env could decrypt every secret. It is now derived at boot inside the enclave from the dstack KMS (v1 `GetKey`), along with an identity key, and never stored or exported. See [`docs/KEY_DERIVATION.md`](docs/KEY_DERIVATION.md).
 - In production, startup now fails if `ADMIN_MLKEM_*`, any `*PRIVATE_KEY`, `*MNEMONIC` or `*SEED` variable, or `DSTACK_SIMULATOR_ENDPOINT` is set, or if keys cannot be derived.
 - Setting `ADMIN_MLKEM_PUBLIC_KEY` no longer skips loading secrets from `KMS_URL`.
+- The attestation's `report_data` was only a timestamp, so anyone between the client and the enclave could replace `mlkemPublicKey` with their own key while serving a genuine quote. It now commits to the ML-KEM and identity public keys, as specified in [`docs/KEY_DERIVATION.md`](docs/KEY_DERIVATION.md#report_data).
 
 ### Changed
 
@@ -34,6 +38,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Breaking:** `POST /auth/nonce` takes a JSON body `{ "address": "0x…" }`, and the nonce is only accepted in a message signed by that address.
 - **Breaking:** the server's ML-KEM key changes, and secrets stored under the old env key can no longer be decrypted by the server. No migration is provided.
 - **Breaking:** requires a dstack ≥ 0.6.0 guest agent (`/v1/GetKey`). Development needs the dstack simulator.
+- **Breaking:** `GET /chest/attestation` returns 503 when the keys have not been derived, instead of a quote without a key. Its `report_data` layout changes, so clients must check the new binding.
 
 - Bump NestJS to 12, including `@nestjs/config` 12 and `@nestjs/swagger` 12.
 - Bump TypeScript to 6.0 and `@types/node` to 26. TypeScript 7 is held back until `typescript-eslint`, `ts-jest` and `@nestjs/swagger` support it.
@@ -43,6 +48,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Set `rootDir`, `types` and `strict` explicitly in `tsconfig.json` and drop the deprecated `baseUrl`, keeping the TypeScript 5 behavior.
 - Ignore `NOTES.md` and `notes/`.
 - Remove the codecov badge and the w3hc image from the README.
+- Remove the Codecov upload from CI, along with the coverage run that fed it.
 
 ### Fixed
 

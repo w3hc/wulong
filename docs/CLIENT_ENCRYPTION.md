@@ -374,14 +374,24 @@ console.log('Decrypted:', secret); // TEE already decrypted it
 const attestation = await fetch('/chest/attestation').then(r => r.json());
 // Use public key directly ❌
 
-// DO: Verify measurement first
-const attestation = await fetch('/chest/attestation').then(r => r.json());
+// DO: Verify the quote, the measurement and the key binding first
+const nonce = crypto.getRandomValues(new Uint8Array(32));
+const attestation = await fetch(
+  `/chest/attestation?nonce=${toHex(nonce)}`,
+).then(r => r.json());
 const expectedMeasurement = getExpectedMeasurementFromGitHub();
 if (attestation.measurement !== expectedMeasurement) {
   throw new Error('Code measurement mismatch!');
 }
+// The quote's report_data must commit to mlkemPublicKey and your nonce,
+// otherwise anyone between you and the enclave could swap the key
+if (!reportDataMatches(attestation, nonce)) {
+  throw new Error('Public key is not bound to the attestation!');
+}
 // Now safe to use public key ✅
 ```
+
+`reportDataMatches` recomputes `report_data` as described in [KEY_DERIVATION.md](KEY_DERIVATION.md#report_data) and compares it with the one in the quote. [`src/attestation/key-binding.ts`](../src/attestation/key-binding.ts) implements it, and `pnpm verify:attestation <url>` runs it against a live server.
 
 ### 2. Store Slot IDs Securely
 
