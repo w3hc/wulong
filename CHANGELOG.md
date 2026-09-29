@@ -23,6 +23,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `pnpm verify:attestation` checks the key binding: it sends a random nonce, recomputes `report_data`, compares it with the quote, and checks the manifest signer and ML-KEM hash.
 - `GET /chest/attestation` returns `measurements` (MRTD, RTMR0–3) and the dstack `eventLog`. RTMR3 identifies the app; [`docs/TEE_SETUP.md`](docs/TEE_SETUP.md#measurements) explains how to reproduce it from the compose file.
 - `pnpm verify:attestation` checks that the returned measurements are the ones in the quote.
+- [`release.yml`](.github/workflows/release.yml): on a `v*` tag, CI builds the image, pushes it to `ghcr.io/w3hc/wulong`, attests its build provenance and publishes its digest in the release notes. [`docs/DOCKER.md`](docs/DOCKER.md#releases) explains release → digest → compose hash and how to rebuild and compare a digest.
+- CI checks formatting, lints without `--fix`, runs `pnpm build` and `pnpm audit --prod`, and builds the image twice to check that its digest reproduces.
+- `pnpm format:check` and `pnpm lint:fix`.
 
 ### Fixed
 
@@ -43,6 +46,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - The attestation's `measurement` was read at offset 112 of the quote, which holds MRSIGNERSEAM, not MRTD (at 184).
 - `TeePlatformService` was provided twice, in `AppModule` and `SecretModule`. It now lives in `AttestationModule`.
 - `pnpm audit --prod` reported one high and three moderate findings, from `@phala/dstack-sdk`'s viem and Solana dependencies. The SDK is removed: quotes go through Wulong's own dstack client (`/GetQuote`).
+- `docker-compose.yml` ran `julienberanger/wulong:latest` with `pull_policy: always`, so whoever controlled the registry account could ship different code under the same attested compose hash. The image is now pinned by digest and built in CI.
+- The runtime image ran as root and had pnpm installed globally. It now runs as `node` on a digest-pinned Node 24 base, with only `dist` and production dependencies.
+- `.dockerignore` let `secrets/`, `chest.json`, `.env.*` and `notes/` into the build context.
+- CI never ran `pnpm build`, so a compile error in `main.ts` could ship green.
 
 ### Changed
 
@@ -53,6 +60,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Breaking:** `GET /chest/attestation` returns 503 when the keys have not been derived, instead of a quote without a key. Its `report_data` layout changes, so clients must check the new binding.
 - **Breaking:** `GET /attestation` is removed; use `GET /chest/attestation`, which binds the keys.
 - **Breaking:** `GET /chest/attestation` replaces `measurement` with `measurements` and `eventLog`, drops `publicKey`, and `platform` is `intel-tdx`, or `none` outside production without dstack.
+- **Breaking:** the image moves to `ghcr.io/w3hc/wulong` and runs as `node`. An existing `wulong-data` volume must be handed to uid 1000 once, see [`docs/DOCKER.md`](docs/DOCKER.md#upgrading-from-a-root-image).
+- **Breaking:** `pnpm lint` no longer fixes; use `pnpm lint:fix`.
 
 - Bump NestJS to 12, including `@nestjs/config` 12 and `@nestjs/swagger` 12.
 - Bump TypeScript to 6.0 and `@types/node` to 26. TypeScript 7 is held back until `typescript-eslint`, `ts-jest` and `@nestjs/swagger` support it.

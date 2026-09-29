@@ -4,7 +4,7 @@
 [![Test](https://github.com/julienbrg/wulong/actions/workflows/test.yml/badge.svg)](https://github.com/julienbrg/wulong/actions/workflows/test.yml)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178C6?logo=typescript)](https://www.typescriptlang.org/)
 [![pnpm](https://img.shields.io/badge/pnpm-10.23-F69220?logo=pnpm)](https://pnpm.io/)
-[![Node.js](https://img.shields.io/badge/Node.js-20+-339933?logo=node.js)](https://nodejs.org/)
+[![Node.js](https://img.shields.io/badge/Node.js-24-339933?logo=node.js)](https://nodejs.org/)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
 A NestJS API designed to run inside a Trusted Execution Environment (TEE) with quantum-resistant ML-KEM-1024 encryption and Web3 authentication (SIWE), giving users cryptographic guarantees that the operator cannot access their data during processing. Optimized for [Phala Network](https://phala.network/) deployment.
@@ -67,8 +67,9 @@ Access at `https://localhost:3000`
 ### Phala Cloud (Production TEE)
 
 ```bash
-# Build and push Docker image
-docker buildx build --platform linux/amd64 -t YOUR_USERNAME/wulong:latest --push .
+# Tag a release: CI builds, pushes and attests the image, and publishes its digest
+# in the release notes. Pin that digest in docker-compose.yml (see docs/DOCKER.md#releases)
+git tag v0.2.0 && git push origin v0.2.0
 
 # Deploy to Phala Cloud
 phala deploy --interactive
