@@ -48,7 +48,8 @@ For testing purposes, use Hardhat's default test account:
 
 1. In Swagger, find **POST /auth/nonce** and expand it
 2. Click **"Try it out"**
-3. Click **"Execute"**
+3. Set the request body to the address that will sign, e.g. `{ "address": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266" }`
+4. Click **"Execute"**
 
 **Expected Response (201):**
 ```json

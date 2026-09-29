@@ -185,7 +185,9 @@ x-siwe-signature: <hex signature>
 
 ```bash
 # Step 1: Get nonce
-NONCE=$(curl -k -X POST https://localhost:3000/auth/nonce | jq -r '.nonce')
+NONCE=$(curl -k -X POST https://localhost:3000/auth/nonce \
+  -H 'Content-Type: application/json' \
+  -d '{"address": "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb"}' | jq -r '.nonce')
 
 # Step 2: Create and sign SIWE message (using your wallet)
 # Message format:
@@ -216,7 +218,9 @@ import { SiweMessage } from 'siwe';
 
 // Get nonce
 const { nonce } = await fetch('https://localhost:3000/auth/nonce', {
-  method: 'POST'
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ address: walletAddress }),
 }).then(r => r.json());
 
 // Create SIWE message
@@ -259,9 +263,17 @@ console.log('Secret:', secret);
 
 ### POST /auth/nonce
 
-Generate a SIWE (Sign-In with Ethereum) nonce for authentication.
+Generate a SIWE (Sign-In with Ethereum) nonce for authentication, bound to the address that will sign the message.
 
 **Authentication:** None
+
+**Request Body:**
+
+```typescript
+{
+  address: string;  // Ethereum address that will sign the SIWE message
+}
+```
 
 **Response:**
 
@@ -275,7 +287,9 @@ Generate a SIWE (Sign-In with Ethereum) nonce for authentication.
 
 ```bash
 # Request
-curl -k -X POST https://localhost:3000/auth/nonce
+curl -k -X POST https://localhost:3000/auth/nonce \
+  -H 'Content-Type: application/json' \
+  -d '{"address": "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb"}'
 
 # Response
 {
@@ -285,7 +299,7 @@ curl -k -X POST https://localhost:3000/auth/nonce
 
 **Usage Flow:**
 
-1. Call `/auth/nonce` to get a fresh nonce
+1. Call `/auth/nonce` with the signing address to get a fresh nonce
 2. Create SIWE message with the nonce
 3. Sign the message with your Ethereum wallet
 4. Use the signature in `x-siwe-signature` header for protected endpoints

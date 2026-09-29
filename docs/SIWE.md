@@ -10,8 +10,10 @@ Wulong implements a minimalistic SIWE authentication system using **NestJS Guard
 - **Header-based credentials** - SIWE message and signature sent via HTTP headers
 - **Stateless nonce-based authentication** - No JWT tokens, no persistent sessions
 - **In-memory nonce storage** - Ephemeral, TEE-friendly (no data persistence)
-- **5-minute time window** - Nonces expire after 5 minutes
-- **Single-use nonces** - Each nonce can only be used once
+- **5-minute time window** - Nonces expire after 5 minutes, and `Issued At` must fall between the nonce's creation and now
+- **Single-use nonces** - Each nonce is consumed by the first verification attempt, even a failed one
+- **Address-bound nonces** - A nonce is only accepted in a message signed by the address it was issued to
+- **Domain allow-list** - The message `domain` must be listed in `SIWE_DOMAIN`, and its scheme must be `https` in production
 
 ## API Endpoints
 
@@ -19,11 +21,13 @@ Wulong implements a minimalistic SIWE authentication system using **NestJS Guard
 
 **Endpoint:** `POST /auth/nonce`
 
-Generates a cryptographically secure random nonce that must be included in the SIWE message.
+Generates a cryptographically secure random nonce that must be included in the SIWE message signed by `address`.
 
 **Request:**
 ```bash
-curl -k -X POST https://localhost:3000/auth/nonce
+curl -k -X POST https://localhost:3000/auth/nonce \
+  -H 'Content-Type: application/json' \
+  -d '{"address": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"}'
 ```
 
 **Response:**
@@ -136,6 +140,8 @@ const wallet = new Wallet('0x...');
 // Step 1: Get nonce from server
 const nonceResponse = await fetch('https://localhost:3000/auth/nonce', {
   method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ address: wallet.address }),
 });
 const { nonce } = await nonceResponse.json();
 
@@ -183,14 +189,16 @@ await w3pk.register({ username: 'user@example.com' });
 // or
 await w3pk.login();
 
-// Step 1: Get nonce from Wulong
+// Step 1: Get the address that will sign (same mode and tag as signMessage)
+const address = await w3pk.getAddress();
+
+// Step 2: Get nonce from Wulong
 const nonceResponse = await fetch('https://localhost:3000/auth/nonce', {
   method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ address }),
 });
 const { nonce } = await nonceResponse.json();
-
-// Step 2: Get user's address
-const address = w3pk.user?.address;
 
 // Step 3: Create SIWE message
 const siweMessage = `${window.location.host} wants you to sign in with your Ethereum account:
@@ -234,6 +242,8 @@ console.log(result); // { message: "Hello, authenticated user!", address: "0x...
 // Step 1: Get nonce
 const nonceResponse = await fetch('https://localhost:3000/auth/nonce', {
   method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ address: ethereum.selectedAddress }),
 });
 const { nonce } = await nonceResponse.json();
 
@@ -271,9 +281,11 @@ console.log(result);
 
 ### Using Etherscan Signing Tool
 
-**Step 1:** Get a fresh nonce
+**Step 1:** Get a fresh nonce for the signing address
 ```bash
-curl -k -X POST https://localhost:3000/auth/nonce
+curl -k -X POST https://localhost:3000/auth/nonce \
+  -H 'Content-Type: application/json' \
+  -d '{"address": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"}'
 ```
 
 Response:
@@ -509,7 +521,9 @@ Typical response times on a TEE-enabled server:
 
 ### Domain Configuration
 
-In production, update the SIWE message to use your actual domain:
+Set `SIWE_DOMAIN` to the hosts (with port) of the UIs allowed to request a signature, comma-separated, e.g. `SIWE_DOMAIN=app.example.com,admin.example.com`. The server refuses to start in production without it, and rejects messages whose `domain` is not listed or whose scheme is not `https`.
+
+The UI then signs messages for its own host:
 
 ```javascript
 const siweMessage = new SiweMessage({

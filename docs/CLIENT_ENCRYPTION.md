@@ -200,6 +200,8 @@ import { SiweMessage } from 'siwe';
 // Get nonce for SIWE
 const nonceResponse = await fetch('https://your-tee-service.com/auth/nonce', {
   method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ address: yourEthereumAddress }),
 });
 const { nonce } = await nonceResponse.json();
 
@@ -345,6 +347,8 @@ console.log('Stored in slot:', slot);
 // Later: retrieve with SIWE
 const nonce = await fetch('https://tee-service.com/auth/nonce', {
   method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ address: await w3pk.getAddress() }),
 }).then(r => r.json()).then(d => d.nonce);
 
 const { signature, address } = await w3pk.signMessage(/* SIWE message */, {
