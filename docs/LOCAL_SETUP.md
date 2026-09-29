@@ -124,7 +124,7 @@ Key endpoints:
 - `GET /` - Swagger UI documentation
 - `GET /health` - Health check
 - `GET /chest/attestation` - TEE attestation and public key
-- `POST /chest/store` - Store encrypted data
+- `POST /chest/store` - Store encrypted data (SIWE)
 - `POST /chest/access` - Access encrypted data
 
 See [API_REFERENCE.md](./API_REFERENCE.md) for complete endpoint documentation.

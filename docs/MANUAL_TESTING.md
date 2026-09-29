@@ -19,32 +19,7 @@ For testing purposes, use Hardhat's default test account:
 
 ## Step-by-Step Testing
 
-### Step 1: Store a Secret
-
-1. Open https://localhost:3000 in your browser
-2. Find **POST /chest/store** and expand it
-3. Click **"Try it out"**
-4. Use this example request body:
-   ```json
-   {
-     "secret": "苟全性命於亂世，不求聞達於諸侯。",
-     "publicAddresses": ["0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"]
-   }
-   ```
-5. Click **"Execute"**
-
-**Expected Response (201):**
-```json
-{
-  "slot": "047d4396cbbf44a41c61d0c75f3bf6e322df175140b877f503442d5caeccdb2b"
-}
-```
-
-📋 **Copy the `slot` value** - you'll need it for Step 4.
-
----
-
-### Step 2: Get Authentication Nonce
+### Step 1: Get Authentication Nonce
 
 1. In Swagger, find **POST /auth/nonce** and expand it
 2. Click **"Try it out"**
@@ -60,13 +35,13 @@ For testing purposes, use Hardhat's default test account:
 }
 ```
 
-📋 **Copy the `nonce` value** - you'll need it for Step 3.
+📋 **Copy the `nonce` value** - you'll need it for Step 2.
 
 > 💡 Nonces expire in 5 minutes. If your nonce expires, generate a new one.
 
 ---
 
-### Step 3: Generate SIWE Headers
+### Step 2: Generate SIWE Headers
 
 Create a file `generate-siwe-headers.mjs` with the following content:
 
@@ -126,7 +101,35 @@ x-siwe-signature: 0xe6993b8d8609e68e4490bb48316c09456cce2593a68cc017253a86892eea
 Wallet address: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
 ```
 
-📋 **Copy both header values** - you'll need them for Step 4.
+📋 **Copy both header values** - you'll need them for Step 3.
+
+---
+
+### Step 3: Store a Secret
+
+1. Open https://localhost:3000 in your browser
+2. Find **POST /chest/store** and expand it
+3. Click **"Try it out"**
+4. Add the authentication headers from Step 2:
+   - **x-siwe-message**: `<paste base64 value from Step 2>`
+   - **x-siwe-signature**: `<paste signature from Step 2>`
+5. Use this example request body (the signing wallet must be one of `publicAddresses`):
+   ```json
+   {
+     "secret": "苟全性命於亂世，不求聞達於諸侯。",
+     "publicAddresses": ["0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"]
+   }
+   ```
+6. Click **"Execute"**
+
+**Expected Response (201):**
+```json
+{
+  "slot": "047d4396cbbf44a41c61d0c75f3bf6e322df175140b877f503442d5caeccdb2b"
+}
+```
+
+📋 **Copy the `slot` value** - you'll need it for Step 4.
 
 ---
 
@@ -134,10 +137,10 @@ Wallet address: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
 
 1. In Swagger, find **GET /chest/access/{slot}** and expand it
 2. Click **"Try it out"**
-3. In the **slot** field, paste your slot from Step 1
-4. Add the authentication headers:
-   - **x-siwe-message**: `<paste base64 value from Step 3>`
-   - **x-siwe-signature**: `<paste signature from Step 3>`
+3. In the **slot** field, paste your slot from Step 3
+4. Add fresh authentication headers — each nonce is single-use, so repeat Steps 1 and 2 first:
+   - **x-siwe-message**: `<paste base64 value from Step 2>`
+   - **x-siwe-signature**: `<paste signature from Step 2>`
 5. Click **"Execute"**
 
 **Expected Response (200):**
@@ -172,18 +175,19 @@ Try accessing the secret without the headers:
 
 ---
 
-### Test 2: Access with Wrong Wallet
+### Test 2: Store for Another Address
 
-Store a secret for a different address, then try to access it:
+The signing wallet must be one of `publicAddresses`. Try to store a secret only for someone else:
 
-1. Store a secret with `publicAddresses: ["0x70997970C51812dc3A010C7d01b50e0d17dc79C8"]`
-2. Generate SIWE headers using the default test wallet (Step 3)
-3. Try to access the secret
+1. Generate SIWE headers using the default test wallet (Steps 1 and 2)
+2. Go to **POST /chest/store**, add the headers, and use `publicAddresses: ["0x70997970C51812dc3A010C7d01b50e0d17dc79C8"]`
+3. Click **"Execute"**
 
 **Expected Response (403):**
 ```json
 {
-  "message": "Forbidden",
+  "message": "Store denied: caller must be one of publicAddresses",
+  "error": "Forbidden",
   "statusCode": 403
 }
 ```
@@ -211,7 +215,7 @@ Try accessing a slot that doesn't exist:
 
 ### Test 4: Store with Multiple Owners
 
-Store a secret accessible by multiple addresses:
+Store a secret accessible by multiple addresses (signed by one of them):
 
 ```json
 {
@@ -238,7 +242,7 @@ Both addresses should be able to access the secret with their respective SIWE au
 - Ensure you're using the correct private key for the address in `publicAddresses`
 
 ### "Forbidden" Error
-- Verify the wallet address used for signing matches one in `publicAddresses`
+- Verify the wallet address used for signing matches one in `publicAddresses` (both for store and access)
 - Addresses are case-insensitive but must match
 
 ---
