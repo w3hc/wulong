@@ -51,9 +51,21 @@ describe('SecretService', () => {
   const mlkemPublicKey = new Uint8Array(1568).fill(0x01);
   const identityPublicKey = new Uint8Array(65).fill(0x04);
 
+  const keyManifest = {
+    manifest: {
+      appId: '0x1111111111111111111111111111111111111111',
+      mlkemPublicKeyHash: '0x' + '22'.repeat(32),
+      relayer: '0x0000000000000000000000000000000000000000',
+      epoch: 1,
+    },
+    signature: '0x' + '33'.repeat(65),
+  };
+
   const mockKeyDerivationService = {
     getMlKemPublicKey: jest.fn(),
     getIdentityPublicKey: jest.fn(),
+    getKeyManifest: jest.fn(),
+    getIdentitySignatureChain: jest.fn(),
   };
 
   // Helper to create a valid encrypted payload
@@ -675,6 +687,11 @@ describe('SecretService', () => {
       mockKeyDerivationService.getIdentityPublicKey.mockReturnValue(
         identityPublicKey,
       );
+      mockKeyDerivationService.getKeyManifest.mockReturnValue(keyManifest);
+      mockKeyDerivationService.getIdentitySignatureChain.mockReturnValue([
+        new Uint8Array([0xaa, 0xbb]),
+        new Uint8Array([0xcc]),
+      ]);
       mockTeePlatformService.generateAttestationReport.mockResolvedValue(
         mockAttestation,
       );
@@ -694,6 +711,8 @@ describe('SecretService', () => {
         mlkemPublicKey: Buffer.from(mlkemPublicKey).toString('base64'),
         identityPublicKey: `0x${Buffer.from(identityPublicKey).toString('hex')}`,
         reportData: `0x${expected.toString('hex')}`,
+        keyManifest,
+        identitySignatureChain: ['0xaabb', '0xcc'],
       });
     });
 
@@ -708,16 +727,19 @@ describe('SecretService', () => {
       expect(result.reportData.endsWith(nonce.toString('hex'))).toBe(true);
     });
 
-    it('refuses to attest without derived keys', async () => {
-      mockKeyDerivationService.getMlKemPublicKey.mockReturnValue(null);
+    it.each(['getMlKemPublicKey', 'getKeyManifest'] as const)(
+      'refuses to attest when %s returns nothing',
+      async (method) => {
+        mockKeyDerivationService[method].mockReturnValue(null);
 
-      await expect(service.getAttestation()).rejects.toThrow(
-        ServiceUnavailableException,
-      );
-      expect(
-        mockTeePlatformService.generateAttestationReport,
-      ).not.toHaveBeenCalled();
-    });
+        await expect(service.getAttestation()).rejects.toThrow(
+          ServiceUnavailableException,
+        );
+        expect(
+          mockTeePlatformService.generateAttestationReport,
+        ).not.toHaveBeenCalled();
+      },
+    );
 
     it('should propagate errors from TEE platform service', async () => {
       mockTeePlatformService.generateAttestationReport.mockRejectedValue(

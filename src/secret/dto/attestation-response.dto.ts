@@ -1,3 +1,4 @@
+import { SignedKeyManifest } from '../../keys/key-derivation.service';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class AttestationResponseDto {
@@ -55,4 +56,19 @@ export class AttestationResponseDto {
     example: '0xab74ab29...',
   })
   reportData: string;
+
+  @ApiProperty({
+    description:
+      'EIP-712 key manifest signed at boot by the identity key: ' +
+      '{ manifest: { appId, mlkemPublicKeyHash, relayer, epoch }, signature }. ' +
+      'Domain { name: "Wulong", version: "1" }.',
+  })
+  keyManifest: SignedKeyManifest;
+
+  @ApiProperty({
+    description:
+      "The identity key's dstack GetKey signature chain (hex), anchored on the KMS root",
+    type: [String],
+  })
+  identitySignatureChain: string[];
 }

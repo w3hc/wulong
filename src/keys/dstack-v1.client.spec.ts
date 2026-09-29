@@ -3,6 +3,7 @@ import * as http from 'http';
 import * as os from 'os';
 import * as path from 'path';
 import { AddressInfo } from 'net';
+import { getAddress } from 'ethers';
 import { DstackV1Client } from './dstack-v1.client';
 
 describe('DstackV1Client', () => {
@@ -28,7 +29,7 @@ describe('DstackV1Client', () => {
       let data = '';
       req.on('data', (chunk) => (data += chunk));
       req.on('end', () => {
-        requests.push({ url: req.url, body: JSON.parse(data) });
+        requests.push({ url: req.url, body: data ? JSON.parse(data) : null });
         res.writeHead(reply.status, { 'Content-Type': 'application/json' });
         res.end(reply.body);
       });
@@ -40,6 +41,24 @@ describe('DstackV1Client', () => {
     delete process.env.DSTACK_SIMULATOR_ENDPOINT;
     await new Promise((resolve) => server.close(resolve));
     fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('reads the app id from Info as a checksummed address', async () => {
+    const socket = path.join(tmpDir, 'dstack.sock');
+    await listen(socket);
+    process.env.DSTACK_SIMULATOR_ENDPOINT = socket;
+    reply.body = JSON.stringify({
+      app_id: 'ab'.repeat(20),
+      instance_id: '',
+      app_cert: '',
+      tcb_info: '{}',
+      app_name: 'wulong',
+    });
+
+    const appId = await new DstackV1Client().getAppId();
+
+    expect(appId).toBe(getAddress('0x' + 'ab'.repeat(20)));
+    expect(requests[0].url).toMatch(/Info$/);
   });
 
   it('calls /v1/GetKey over a unix socket and decodes the response', async () => {

@@ -22,6 +22,8 @@ import {
 const ROOT_KEY =
   '1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b';
 
+const APP_ID = '0x1111111111111111111111111111111111111111';
+
 const lp = (value: string) => {
   const bytes = Buffer.from(value, 'utf-8');
   const prefix = Buffer.alloc(4);
@@ -36,6 +38,10 @@ class FakeDstack {
 
   isSimulator() {
     return this.simulator;
+  }
+
+  getAppId() {
+    return Promise.resolve(APP_ID);
   }
 
   getKey(domain: string, algorithm: KeyAlgorithm): Promise<GetKeyResponse> {
@@ -177,6 +183,25 @@ describe('KeyDerivationService', () => {
 
       const { manifest, signature } = service.signKeyManifest(appId);
 
+      expect(manifest.mlkemPublicKeyHash).toBe(
+        '0x' + sha256(service.getMlKemPublicKey()!),
+      );
+      expect(
+        verifyTypedData(
+          KEY_MANIFEST_DOMAIN,
+          KEY_MANIFEST_TYPES,
+          manifest,
+          signature,
+        ),
+      ).toBe(service.getIdentityAddress());
+    });
+
+    it('signs the key manifest for its app id at boot', async () => {
+      const service = await create();
+
+      const { manifest, signature } = service.getKeyManifest()!;
+
+      expect(manifest.appId).toBe(APP_ID);
       expect(manifest.mlkemPublicKeyHash).toBe(
         '0x' + sha256(service.getMlKemPublicKey()!),
       );

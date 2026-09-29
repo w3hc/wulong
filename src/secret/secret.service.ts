@@ -205,13 +205,15 @@ export class SecretService {
    * keys and to the client's nonce, so a client can check that the returned
    * ML-KEM key is the one held by the attested code.
    * @param nonce Optional 32-byte client challenge for freshness
-   * @returns Attestation report, the committed keys and the `report_data`
+   * @returns Attestation report, the committed keys, the `report_data`, the
+   * signed key manifest and the identity key's `GetKey` signature chain
    * @throws ServiceUnavailableException if the keys have not been derived
    */
   async getAttestation(nonce?: Buffer): Promise<AttestationResponseDto> {
     const mlkemPublicKey = this.keys.getMlKemPublicKey();
     const identityPublicKey = this.keys.getIdentityPublicKey();
-    if (!mlkemPublicKey || !identityPublicKey) {
+    const keyManifest = this.keys.getKeyManifest();
+    if (!mlkemPublicKey || !identityPublicKey || !keyManifest) {
       throw new ServiceUnavailableException('Encryption keys are unavailable');
     }
 
@@ -231,6 +233,10 @@ export class SecretService {
       mlkemPublicKey: Buffer.from(mlkemPublicKey).toString('base64'),
       identityPublicKey: `0x${Buffer.from(identityPublicKey).toString('hex')}`,
       reportData: `0x${reportData.toString('hex')}`,
+      keyManifest,
+      identitySignatureChain: this.keys
+        .getIdentitySignatureChain()
+        .map((link) => `0x${Buffer.from(link).toString('hex')}`),
     };
   }
 

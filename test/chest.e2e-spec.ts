@@ -100,6 +100,16 @@ describe('Chest Endpoints (e2e)', () => {
       .useValue({
         getMlKemPublicKey: () => new Uint8Array(1568).fill(0x01),
         getIdentityPublicKey: () => new Uint8Array(65).fill(0x04),
+        getKeyManifest: () => ({
+          manifest: {
+            appId: '0x1111111111111111111111111111111111111111',
+            mlkemPublicKeyHash: '0x' + '22'.repeat(32),
+            relayer: '0x0000000000000000000000000000000000000000',
+            epoch: 1,
+          },
+          signature: '0x' + '33'.repeat(65),
+        }),
+        getIdentitySignatureChain: () => [new Uint8Array([0xaa])],
       })
       .compile();
 
@@ -712,6 +722,8 @@ describe('Chest Endpoints (e2e)', () => {
             Buffer.from(nonce, 'hex'),
           );
           expect(body.reportData).toBe(`0x${expected.toString('hex')}`);
+          expect(res.body).toHaveProperty('keyManifest.manifest.appId');
+          expect(res.body).toHaveProperty('identitySignatureChain', ['0xaa']);
         });
     });
 
