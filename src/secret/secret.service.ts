@@ -451,7 +451,7 @@ export class SecretService implements OnModuleInit {
       iv: payload.iv,
       authTag: payload.authTag,
     };
-    const entry = {
+    const entry: Omit<SecretEntry, 'mac'> = {
       version: CHEST_ENTRY_VERSION,
       encryptedPayload,
       publicAddresses,
