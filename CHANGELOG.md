@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- A chest MAC key, derived from `GetKey("wulong/chest-mac/v1", "ed25519")`. See [`docs/KEY_DERIVATION.md`](docs/KEY_DERIVATION.md#chest-mac-key) ([#51](https://github.com/w3hc/wulong/issues/51)).
+
 - An enclave-derived relayer wallet: its key comes from `GetKey("wulong/relayer/evm/v1", "secp256k1")` and is used directly as the private key. Its address is in the key manifest and `report_data`, and `GET /chest/attestation` serves `relayerAddress`, `relayerPublicKey` and `relayerSignatureChain`. No endpoint signs anything with it ([#49](https://github.com/w3hc/wulong/issues/49)).
 - Chest anchoring, the relayer's first on-chain action: a `WulongAnchor` contract holds the latest `SHA-256(chest.json)` with a sequence number only the relayer can advance. Each write is anchored before it replaces the chest, and startup fails on a chest that does not match the anchor, so the operator cannot roll it back. Configured with `WULONG_ANCHOR_ADDRESS` and `BASE_RPC_URL`; see [`docs/KEY_DERIVATION.md`](docs/KEY_DERIVATION.md#anchoring-the-chest) ([#49](https://github.com/w3hc/wulong/issues/49)).
 - `GET /health/relayer` shows the relayer address, the anchor and the last balance read. A balance above `RELAYER_MAX_BALANCE_WEI` (default 0.01 ETH) is logged ([#49](https://github.com/w3hc/wulong/issues/49)).
@@ -22,6 +24,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `CORS_ORIGINS`: comma-separated origins of the browser UIs allowed to call the API. Unset allows none; startup fails on an entry that is not an exact origin ([#41](https://github.com/w3hc/wulong/issues/41)).
 
 ### Changed
+
+- Chest entries are versioned (`version: 2`) and carry a MAC over their slot, payload and addresses under the chest MAC key, checked before decrypting. An entry whose access list or payload was altered on disk answers `404` like a missing one. See [`docs/KEY_DERIVATION.md`](docs/KEY_DERIVATION.md#authenticating-chest-entries) ([#51](https://github.com/w3hc/wulong/issues/51)).
+- **Breaking:** chest entries stored before this change cannot be accessed and must be stored again. They are not migrated, since that would trust their unauthenticated access list; boot logs how many there are ([#51](https://github.com/w3hc/wulong/issues/51)).
+- `POST /chest/store` requires the server's ML-KEM key among the recipients and every recipient key to be 1568 bytes, and keeps only the payload's known fields ([#51](https://github.com/w3hc/wulong/issues/51)).
+- `GET /chest/access/:slot` answers `404` for any slot that is not 64 lowercase hex characters, before reading the chest ([#51](https://github.com/w3hc/wulong/issues/51)).
 
 - `Deploy.s.sol` also deploys the `WulongAnchor` and takes `RELAYER` ([#49](https://github.com/w3hc/wulong/issues/49)).
 - With anchoring on, a store answers `503` when its write cannot be anchored, and takes about one Base block ([#49](https://github.com/w3hc/wulong/issues/49)).
@@ -41,6 +48,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- The chest access list was stored unauthenticated next to the ciphertext, so anyone able to write the data volume could add their address and have the enclave decrypt the entry through the normal SIWE flow ([#51](https://github.com/w3hc/wulong/issues/51)).
+- `POST /chest/store` rejected every v2 payload: it required 1600-byte recipient ciphertexts whatever the version. v2 now requires 1608 bytes and v1 1600 ([#51](https://github.com/w3hc/wulong/issues/51)).
 - `GET /chest/access/:slot` answered `403` to a non-owner and `404` to a missing slot, so anyone signed in could probe which slots exist. Both now answer `404 Slot not found`, which no longer echoes the slot ([#42](https://github.com/w3hc/wulong/issues/42)).
 - Decryption failures returned the underlying error (`Failed to decrypt secret: …`), and store validation echoed the ciphertext size and the invalid address. Responses now state only the rule; details stay in the server log ([#42](https://github.com/w3hc/wulong/issues/42)).
 - The ML-KEM service rethrew raw errors when `NODE_ENV` was `test`, so tests ran a different path than production. The branch is gone and tests assert the production messages ([#42](https://github.com/w3hc/wulong/issues/42)).
