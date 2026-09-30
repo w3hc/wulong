@@ -390,6 +390,66 @@ describe('SecretService', () => {
       ).resolves.toEqual(expect.any(String));
     });
 
+    it('should read the chest file once and write it through', async () => {
+      const address = '0xbfbaa5a59e3b6c06aff9c975092b8705f804fa1c';
+      const first = await service.store(
+        createMockEncryptedPayload(),
+        [address],
+        address,
+      );
+      const second = await service.store(
+        createMockEncryptedPayload(),
+        [address],
+        address,
+      );
+      mockMlKemEncryptionService.decryptMultiRecipient.mockReturnValue('s');
+      await service.access(first, address);
+
+      expect(fs.existsSync).toHaveBeenCalledTimes(1);
+      const lastWrite = (
+        (fs.promises.writeFile as jest.Mock).mock.calls[1] as unknown[]
+      )[1];
+      expect(Object.keys(JSON.parse(lastWrite as string) as object)).toEqual([
+        first,
+        second,
+      ]);
+    });
+
+    it('should leave the in-memory chest unchanged when a write fails', async () => {
+      jest
+        .spyOn(fs.promises, 'writeFile')
+        .mockRejectedValueOnce(new Error('Write error'));
+
+      const address = '0xbfbaa5a59e3b6c06aff9c975092b8705f804fa1c';
+      await expect(
+        service.store(createMockEncryptedPayload(), [address], address),
+      ).rejects.toThrow('Failed to save secret');
+      await service.store(createMockEncryptedPayload(), [address], address);
+
+      const lastWrite = (
+        (fs.promises.writeFile as jest.Mock).mock.calls[1] as unknown[]
+      )[1];
+      expect(
+        Object.keys(JSON.parse(lastWrite as string) as object),
+      ).toHaveLength(1);
+    });
+
+    it('should retry reading the chest after a failed read', async () => {
+      jest.spyOn(fs, 'existsSync').mockReturnValue(true);
+      jest
+        .spyOn(fs.promises, 'readFile')
+        .mockRejectedValueOnce(new Error('Read error'))
+        .mockResolvedValueOnce('{}');
+
+      const address = '0xbfbaa5a59e3b6c06aff9c975092b8705f804fa1c';
+      await expect(
+        service.store(createMockEncryptedPayload(), [address], address),
+      ).rejects.toThrow('Failed to load secret');
+      await expect(
+        service.store(createMockEncryptedPayload(), [address], address),
+      ).resolves.toEqual(expect.any(String));
+    });
+
     it('should reject with 507 when the chest would exceed CHEST_MAX_BYTES', async () => {
       process.env.CHEST_MAX_BYTES = '100';
       const smallService = new SecretService(
