@@ -26,6 +26,9 @@ export class SiweService {
   // Origin schemes allowed; EIP-4361 treats a missing scheme as https
   private readonly schemes: string[];
 
+  // Chains a message may name: Ethereum mainnet and Base by default
+  private readonly chainIds: number[];
+
   // Used only when key derivation is unavailable, which aborts startup in
   // production: nonces then do not survive a restart or span instances
   private readonly fallbackKey = randomBytes(32);
@@ -41,6 +44,9 @@ export class SiweService {
     this.domains = domains.length ? domains : ['localhost', 'localhost:3000'];
     this.schemes =
       process.env.NODE_ENV === 'production' ? ['https'] : ['https', 'http'];
+    this.chainIds = (process.env.SIWE_CHAIN_IDS || '1,8453')
+      .split(',')
+      .map((chainId) => Number(chainId.trim()));
   }
 
   /**
@@ -101,6 +107,16 @@ export class SiweService {
       if (
         !this.domains.includes(siweMessage.domain) ||
         !this.schemes.includes(siweMessage.scheme ?? 'https')
+      ) {
+        return null;
+      }
+
+      // The URI must point at an allowed origin, not only the domain line
+      const uri = new URL(siweMessage.uri);
+      if (
+        !this.schemes.includes(uri.protocol.slice(0, -1)) ||
+        !this.domains.includes(uri.host) ||
+        !this.chainIds.includes(siweMessage.chainId)
       ) {
         return null;
       }

@@ -8,6 +8,7 @@ import {
   IsOptional,
   IsString,
   IsUrl,
+  Matches,
   Min,
   validateSync,
 } from 'class-validator';
@@ -58,6 +59,13 @@ export class EnvironmentVariables {
   @IsOptional()
   @IsString()
   SIWE_DOMAIN?: string;
+
+  // Chain ids a SIWE message may name, comma-separated; defaults to 1,8453
+  @IsOptional()
+  @Matches(/^\s*\d+\s*(,\s*\d+\s*)*$/, {
+    message: 'SIWE_CHAIN_IDS must be a comma-separated list of chain ids',
+  })
+  SIWE_CHAIN_IDS?: string;
 
   // Browser origins allowed to call the API, comma-separated; unset allows none
   @IsOptional()

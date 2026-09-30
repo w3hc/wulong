@@ -197,6 +197,37 @@ describe('SiweService', () => {
       expect(await service.verifySignature(message, signature)).toBeNull();
     });
 
+    it.each([
+      'https://evil.example',
+      'https://localhost:4000',
+      'ftp://localhost:3000',
+      'urn:uuid:6c0a2d7c-0e1f-4b7a-9c2e-1d3f5a7b9c0d',
+    ])('should reject a URI outside the allowed origins (%s)', async (uri) => {
+      const { message, signature } = await signed({ uri });
+      expect(await service.verifySignature(message, signature)).toBeNull();
+    });
+
+    it('should accept a URI with a path under an allowed origin', async () => {
+      const { message, signature } = await signed({
+        uri: 'https://localhost:3000/login',
+      });
+      expect(await service.verifySignature(message, signature)).toBe(
+        wallet.address,
+      );
+    });
+
+    it('should reject a chain id outside the allowed list', async () => {
+      const { message, signature } = await signed({ chainId: 137 });
+      expect(await service.verifySignature(message, signature)).toBeNull();
+    });
+
+    it('should accept Base by default', async () => {
+      const { message, signature } = await signed({ chainId: 8453 });
+      expect(await service.verifySignature(message, signature)).toBe(
+        wallet.address,
+      );
+    });
+
     it('should reject a message past its Expiration Time', async () => {
       const { message, signature } = await signed({
         expirationTime: new Date(Date.now() - 1000).toISOString(),
@@ -349,6 +380,29 @@ describe('SiweService', () => {
       const custom = new SiweService(noKeys);
 
       expect(await signIn(custom, 'app.example')).toBe(true);
+    });
+
+    it('should accept only the chain ids listed in SIWE_CHAIN_IDS', async () => {
+      process.env.SIWE_CHAIN_IDS = '10, 137';
+      const custom = new SiweService(noKeys);
+      const signOn = async (chainId: number) => {
+        const wallet = Wallet.createRandom();
+        const message = new SiweMessage({
+          domain: 'localhost',
+          address: wallet.address,
+          uri: 'https://localhost',
+          version: '1',
+          chainId,
+          nonce: custom.generateNonce(wallet.address),
+          issuedAt: new Date().toISOString(),
+        }).prepareMessage();
+        const signature = await wallet.signMessage(message);
+        return (await custom.verifySignature(message, signature)) !== null;
+      };
+
+      expect(await signOn(137)).toBe(true);
+      expect(await signOn(10)).toBe(true);
+      expect(await signOn(1)).toBe(false);
     });
 
     it('should default to localhost with and without port 3000', async () => {

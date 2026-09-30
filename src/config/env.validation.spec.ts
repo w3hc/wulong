@@ -46,6 +46,23 @@ describe('Environment Validation', () => {
     });
   });
 
+  describe('SIWE_CHAIN_IDS', () => {
+    it('should accept a comma-separated list of chain ids', () => {
+      const result = validateEnvironment({
+        NODE_ENV: 'test',
+        SIWE_CHAIN_IDS: '1, 8453',
+      });
+
+      expect(result.SIWE_CHAIN_IDS).toBe('1, 8453');
+    });
+
+    it.each(['', 'base', '1,,8453', '0x2105'])('should reject %p', (value) => {
+      expect(() =>
+        validateEnvironment({ NODE_ENV: 'test', SIWE_CHAIN_IDS: value }),
+      ).toThrow('SIWE_CHAIN_IDS must be a comma-separated list of chain ids');
+    });
+  });
+
   describe('relayer', () => {
     it.each([
       ['WULONG_ANCHOR_ADDRESS', '0x1234'],
