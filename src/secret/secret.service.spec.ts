@@ -629,15 +629,25 @@ describe('SecretService', () => {
       expect(secret).toBe(testSecret);
     });
 
-    it('should throw BadRequestException if slot is empty', async () => {
-      await expect(service.access('', testAddress)).rejects.toThrow(
-        BadRequestException,
-      );
-
-      await expect(service.access('   ', testAddress)).rejects.toThrow(
-        BadRequestException,
-      );
-    });
+    it.each([
+      ['empty', ''],
+      ['blank', '   '],
+      ['short', 'a'.repeat(63)],
+      ['long', 'a'.repeat(65)],
+      ['uppercase', 'A'.repeat(64)],
+      ['non-hex', 'g'.repeat(64)],
+      ['__proto__', '__proto__'],
+      ['constructor', 'constructor'],
+      ['toString', 'toString'],
+    ])(
+      'should throw NotFoundException for a %s slot without reading the chest',
+      async (_, slot) => {
+        await expect(service.access(slot, testAddress)).rejects.toThrow(
+          new NotFoundException('Slot not found'),
+        );
+        expect(fs.promises.readFile).not.toHaveBeenCalled();
+      },
+    );
 
     it('should throw BadRequestException if caller address is invalid', async () => {
       await expect(service.access(testSlot, 'invalid-address')).rejects.toThrow(
@@ -659,12 +669,6 @@ describe('SecretService', () => {
       await expect(
         service.access(testSlot, unauthorizedAddress),
       ).rejects.toThrow(new NotFoundException('Slot not found'));
-    });
-
-    it('should throw NotFoundException for a slot named after an Object property', async () => {
-      await expect(service.access('__proto__', testAddress)).rejects.toThrow(
-        new NotFoundException('Slot not found'),
-      );
     });
 
     describe('entry authentication', () => {

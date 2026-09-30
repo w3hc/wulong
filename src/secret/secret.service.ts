@@ -37,6 +37,7 @@ interface SecretEntry {
 }
 
 const DEFAULT_CHEST_MAX_BYTES = 50 * 1024 * 1024;
+const SLOT_PATTERN = /^[0-9a-f]{64}$/;
 
 interface SecretData {
   [slot: string]: SecretEntry;
@@ -262,12 +263,15 @@ export class SecretService implements OnModuleInit {
    * @param slot The slot identifier
    * @param callerAddress The address of the caller (from SIWE authentication)
    * @returns The decrypted secret (plaintext)
-   * @throws NotFoundException if slot doesn't exist or caller is not an owner
+   * @throws NotFoundException if slot is malformed, doesn't exist or caller
+   * is not an owner
    * @throws BadRequestException if decryption fails
    */
   async access(slot: string, callerAddress: string): Promise<string> {
-    if (!slot || slot.trim().length === 0) {
-      throw new BadRequestException('Slot cannot be empty');
+    // Only generateSlot's output can exist, so nothing else reaches the
+    // lookup, whatever the chest holds
+    if (typeof slot !== 'string' || !SLOT_PATTERN.test(slot)) {
+      throw new NotFoundException('Slot not found');
     }
 
     if (!callerAddress || !isAddress(callerAddress)) {
