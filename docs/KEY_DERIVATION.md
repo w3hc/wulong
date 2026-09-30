@@ -20,7 +20,7 @@ Design for how Wulong obtains its long-lived private keys so that they exist onl
 
 ## Summary
 
-Wulong holds four keys, all derived at boot from the [dstack](https://github.com/Dstack-TEE/dstack) KMS with the v1 guest API `GetKey`, and never stored, exported or passed through env:
+Wulong holds five keys, all derived at boot from the [dstack](https://github.com/Dstack-TEE/dstack) KMS with the v1 guest API `GetKey`, and never stored, exported or passed through env:
 
 | Key | `GetKey` domain | Algorithm | Used for |
 | --- | --- | --- | --- |
@@ -28,6 +28,7 @@ Wulong holds four keys, all derived at boot from the [dstack](https://github.com
 | Relayer wallet | `wulong/relayer/evm/v1` | `secp256k1` | Anchoring the chest on chain ([The relayer wallet](#the-relayer-wallet)) |
 | Identity key | `wulong/identity/v1` | `secp256k1` | Signing the key manifest that binds the other public keys |
 | Chest MAC key | `wulong/chest-mac/v1` | `ed25519` (used as a 32-byte seed) | Authenticating chest entries ([Authenticating chest entries](#authenticating-chest-entries)) |
+| SIWE nonce key | `wulong/siwe-nonce/v1` | `ed25519` (used as a 32-byte seed) | Issuing SIWE nonces without storing them ([SIWE nonce key](#siwe-nonce-key)) |
 
 `GetKey` is deterministic in `(app_id, domain, algorithm)`: every instance of the app, on every restart, gets the same keys, so nothing needs to be persisted or backed up. The KMS releases the app's root key only to a CVM whose boot measurements match the app's on-chain policy (allowed compose hash, allowed OS image), so only code the app owner has registered on chain can ever derive them.
 
@@ -96,6 +97,16 @@ mac_key = HKDF-SHA256(ikm = k, salt = "wulong",
 ```
 
 `KeyDerivationService.macChestEntry` computes HMAC-SHA256 under it; the key itself never leaves the service.
+
+### SIWE nonce key
+
+```text
+k         = GetKey("wulong/siwe-nonce/v1", "ed25519").key          # 32 bytes
+nonce_key = HKDF-SHA256(ikm = k, salt = "wulong",
+                        info = u32be(20) || "wulong-siwe-nonce-v1", L = 32)
+```
+
+`KeyDerivationService.macSiweNonce` computes HMAC-SHA256 under it. A SIWE nonce is `hex(issuedAt_ms u64be || random[8] || HMAC(nonce_key, issuedAt || random || lowercase address)[:16])`, so the server checks it without having stored it, and every instance accepts nonces issued by another. See [SIWE.md](./SIWE.md#nonce-management).
 
 ## Binding the public keys
 

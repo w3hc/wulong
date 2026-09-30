@@ -17,10 +17,12 @@ export const MLKEM_DOMAIN = 'wulong/mlkem-1024/v1';
 export const IDENTITY_DOMAIN = 'wulong/identity/v1';
 export const RELAYER_DOMAIN = 'wulong/relayer/evm/v1';
 export const CHEST_MAC_DOMAIN = 'wulong/chest-mac/v1';
+export const SIWE_NONCE_DOMAIN = 'wulong/siwe-nonce/v1';
 
 const MLKEM_SEED_SALT = 'wulong';
 const MLKEM_SEED_INFO = lengthPrefixed('wulong-mlkem-1024-seed-v1');
 const CHEST_MAC_INFO = lengthPrefixed('wulong-chest-mac-v1');
+const SIWE_NONCE_INFO = lengthPrefixed('wulong-siwe-nonce-v1');
 
 export const KEY_MANIFEST_DOMAIN = { name: 'Wulong', version: '1' };
 export const KEY_MANIFEST_TYPES = {
@@ -69,6 +71,7 @@ export class KeyDerivationService implements OnModuleInit {
   private relayerSignatureChain: Uint8Array[] = [];
   private keyManifest: SignedKeyManifest | null = null;
   private chestMacKey: Buffer | null = null;
+  private siweNonceKey: Buffer | null = null;
 
   constructor(private readonly dstack: DstackV1Client) {}
 
@@ -131,6 +134,12 @@ export class KeyDerivationService implements OnModuleInit {
     );
     chestMac.key.fill(0);
 
+    const siweNonce = await this.dstack.getKey(SIWE_NONCE_DOMAIN, 'ed25519');
+    const siweNonceKey = Buffer.from(
+      hkdfSync('sha256', siweNonce.key, MLKEM_SEED_SALT, SIWE_NONCE_INFO, 32),
+    );
+    siweNonce.key.fill(0);
+
     const appId = await this.dstack.getAppId();
 
     this.mlkem = mlkem;
@@ -141,6 +150,7 @@ export class KeyDerivationService implements OnModuleInit {
     this.relayer = relayerKey;
     this.relayerSignatureChain = relayer.signatureChain;
     this.chestMacKey = chestMacKey;
+    this.siweNonceKey = siweNonceKey;
     this.keyManifest = this.signKeyManifest(appId);
   }
 
@@ -172,6 +182,17 @@ export class KeyDerivationService implements OnModuleInit {
       throw new Error('Chest MAC key not derived');
     }
     return createHmac('sha256', this.chestMacKey).update(data).digest();
+  }
+
+  /**
+   * HMAC-SHA256 under the SIWE nonce key, which lets SiweService issue
+   * nonces without storing them.
+   */
+  macSiweNonce(data: Uint8Array): Buffer {
+    if (!this.siweNonceKey) {
+      throw new Error('SIWE nonce key not derived');
+    }
+    return createHmac('sha256', this.siweNonceKey).update(data).digest();
   }
 
   getIdentityAddress(): string | null {

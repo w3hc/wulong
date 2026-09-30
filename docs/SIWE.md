@@ -9,11 +9,13 @@ Wulong implements a minimalistic SIWE authentication system using **NestJS Guard
 - **Guard-based authentication** - NestJS Guards validate SIWE signatures on protected endpoints
 - **Header-based credentials** - SIWE message and signature sent via HTTP headers
 - **Stateless nonce-based authentication** - No JWT tokens, no persistent sessions
-- **In-memory nonce storage** - Ephemeral, TEE-friendly (no data persistence)
+- **Stateless nonces** - A nonce carries its issue time and an HMAC under an enclave-derived key, so pending nonces take no memory; only used ones are remembered, for 5 minutes
 - **5-minute time window** - Nonces expire after 5 minutes, and `Issued At` must fall between the nonce's creation and now
 - **Single-use nonces** - Each nonce is consumed by the first verification attempt, even a failed one
 - **Address-bound nonces** - A nonce is only accepted in a message signed by the address it was issued to
 - **Domain allow-list** - The message `domain` must be listed in `SIWE_DOMAIN`, and its scheme must be `https` in production
+- **URI allow-list** - The message `uri` must be on an origin whose host is listed in `SIWE_DOMAIN`, with an allowed scheme
+- **Chain allow-list** - The message `chainId` must be listed in `SIWE_CHAIN_IDS` (default `1,8453`: Ethereum Mainnet and Base)
 
 ## API Endpoints
 
@@ -21,7 +23,7 @@ Wulong implements a minimalistic SIWE authentication system using **NestJS Guard
 
 **Endpoint:** `POST /auth/nonce`
 
-Generates a cryptographically secure random nonce that must be included in the SIWE message signed by `address`.
+Generates a nonce that must be included in the SIWE message signed by `address`: 64 hex characters encoding the issue time, 8 random bytes and an HMAC tag over them and the address.
 
 **Request:**
 ```bash
@@ -110,7 +112,7 @@ Issued At: 2026-03-17T16:49:38.495Z' \
      │                                │  6. SiweGuard intercepts       │
      │                                │  7. Verify signature           │
      │                                │  8. Check nonce validity       │
-     │                                │  9. Delete nonce (single-use)  │
+     │                                │  9. Mark nonce used            │
      │                                │ 10. Attach address to request  │
      │                                │                                │
      │ 11. Response with address      │                                │
@@ -440,18 +442,18 @@ const checksummed = getAddress('0x502fb0dff6a2adbf43468c9888d1a26943eac6d1');
 
 This SIWE implementation is designed for TEE environments:
 
-1. **No persistent storage** - Nonces are stored in-memory only
-2. **No JWT secrets** - No shared secrets that could be extracted
-3. **Ephemeral by design** - Server restart clears all nonces
+1. **No persistent storage** - Used nonces are remembered in memory only
+2. **No JWT secrets** - The nonce key is derived inside the enclave and never leaves `KeyDerivationService`
+3. **Ephemeral by design** - A nonce is only valid for 5 minutes, so a restart only forgets which recent ones were used, and every instance derives the same key
 4. **No session tracking** - Each verification is independent
 
 ### Nonce Management
 
-- Nonces are **single-use** - Deleted immediately after verification
+- Nonces are **stateless** - `hex(issuedAt || random || HMAC-SHA256(k, issuedAt || random || address)[:16])`, with `k` derived from `GetKey("wulong/siwe-nonce/v1")`, see [KEY_DERIVATION.md](./KEY_DERIVATION.md#siwe-nonce-key). Nothing is stored when one is issued, so no number of pending nonces can lock anyone out
+- Nonces are **single-use** - The first verification attempt with a valid tag marks the nonce used, even if the signature then fails
 - Nonces **expire after 5 minutes** - Time-limited window
-- Nonces are **cryptographically random** - 32 bytes (256 bits) of entropy
-- Expired nonces are **automatically cleaned up** - Prevents memory bloat
-- Pending nonces are **capped at 10,000** - Past the cap, `POST /auth/nonce` returns 429; live nonces are never evicted
+- Used nonces are **forgotten after 5 minutes** - By then they have expired anyway; the rate limiter bounds how many can be recorded
+- Without key derivation (development without the dstack simulator), a random per-process key is used instead
 
 ### Address Verification
 
@@ -471,7 +473,7 @@ Every route, including `/auth/nonce` and those behind `SiweGuard`, goes through 
 - **`SiweGuard`** - NestJS Guard that implements `CanActivate`
 - Extracts credentials from `x-siwe-message` and `x-siwe-signature` headers
 - Verifies signature using SIWE library
-- Validates nonce (existence, expiration, single-use)
+- Validates nonce (tag, expiration, single-use), `uri` and `chainId`
 - Attaches verified address to `request.user.address`
 - Throws `UnauthorizedException` (401) on any validation failure
 
@@ -523,7 +525,7 @@ Typical response times on a TEE-enabled server:
 
 ### Domain Configuration
 
-Set `SIWE_DOMAIN` to the hosts (with port) of the UIs allowed to request a signature, comma-separated, e.g. `SIWE_DOMAIN=app.example.com,admin.example.com`. The server refuses to start in production without it, and rejects messages whose `domain` is not listed or whose scheme is not `https`.
+Set `SIWE_DOMAIN` to the hosts (with port) of the UIs allowed to request a signature, comma-separated, e.g. `SIWE_DOMAIN=app.example.com,admin.example.com`. The server refuses to start in production without it, and rejects messages whose `domain` or `uri` host is not listed or whose scheme is not `https`.
 
 The UI then signs messages for its own host:
 
@@ -558,12 +560,11 @@ The server uses HTTPS with TLS termination inside the TEE. In production:
 
 ### Chain ID
 
-The default chain ID is `1` (Ethereum Mainnet). Update this based on your needs:
+Messages must name a chain listed in `SIWE_CHAIN_IDS`, comma-separated. It defaults to `1,8453`:
 - `1` - Ethereum Mainnet
-- `11155111` - Sepolia Testnet
-- `10` - Optimism
-- `137` - Polygon
-- etc.
+- `8453` - Base
+
+Set it to the chains your UI's wallets sign on, e.g. `SIWE_CHAIN_IDS=1,8453,11155111` to also accept Sepolia.
 
 ## Further Reading
 

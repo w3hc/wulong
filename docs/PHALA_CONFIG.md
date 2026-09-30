@@ -65,6 +65,7 @@ services:
       - NODE_ENV=${NODE_ENV}
       - CORS_ORIGINS=${CORS_ORIGINS}  # Browser UIs allowed to call the API
       - SIWE_DOMAIN=${SIWE_DOMAIN}  # UIs allowed to request a SIWE signature
+      - SIWE_CHAIN_IDS=${SIWE_CHAIN_IDS:-1,8453}  # Chains a SIWE message may name
       - TLS_ALT_NAMES=${TLS_ALT_NAMES}  # <APP_ID>-3000s.<CLUSTER>.phala.network
     restart: unless-stopped
 ```

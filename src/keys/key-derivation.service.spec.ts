@@ -18,6 +18,7 @@ import {
   KEY_MANIFEST_DOMAIN,
   KEY_MANIFEST_TYPES,
   KeyDerivationService,
+  SIWE_NONCE_DOMAIN,
 } from './key-derivation.service';
 
 // App root key from the dstack guest API v1 spec test vectors
@@ -259,6 +260,36 @@ describe('KeyDerivationService', () => {
 
       expect(() => service.macChestEntry(Buffer.from('entry'))).toThrow(
         'Chest MAC key not derived',
+      );
+    });
+
+    it('macs SIWE nonces under a key derived from its own GetKey domain', async () => {
+      const service = await create();
+      const { key } = await dstack.getKey(SIWE_NONCE_DOMAIN, 'ed25519');
+      const macKey = hkdfSync(
+        'sha256',
+        key,
+        'wulong',
+        lp('wulong-siwe-nonce-v1'),
+        32,
+      );
+      const data = Buffer.from('nonce');
+
+      expect(hex(service.macSiweNonce(data))).toBe(
+        createHmac('sha256', Buffer.from(macKey)).update(data).digest('hex'),
+      );
+      expect(hex(service.macSiweNonce(data))).not.toBe(
+        hex(service.macChestEntry(data)),
+      );
+    });
+
+    it('refuses to mac a SIWE nonce without keys', () => {
+      const service = new KeyDerivationService(
+        dstack as unknown as DstackV1Client,
+      );
+
+      expect(() => service.macSiweNonce(Buffer.from('nonce'))).toThrow(
+        'SIWE nonce key not derived',
       );
     });
 
