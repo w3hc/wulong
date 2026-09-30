@@ -84,7 +84,45 @@ describe('SecretService', () => {
     createHmac('sha256', macKey).update(data).digest();
 
   // Pins the MAC encoding: changing it makes every stored entry unreadable
+  const macFields = (
+    version: number,
+    slot: string,
+    encryptedPayload: ReturnType<typeof createMockEncryptedPayload>,
+    publicAddresses: string[],
+  ) => [
+    'wulong-chest-entry',
+    version,
+    slot,
+    1,
+    encryptedPayload.recipients.map((r) => [r.publicKey, r.ciphertext]),
+    encryptedPayload.encryptedData,
+    encryptedPayload.iv,
+    encryptedPayload.authTag,
+    publicAddresses,
+  ];
+
   const seal = (
+    slot: string,
+    encryptedPayload: ReturnType<typeof createMockEncryptedPayload>,
+    publicAddresses: string[],
+    owner = publicAddresses[0],
+  ) => ({
+    version: 3,
+    encryptedPayload,
+    publicAddresses,
+    owner,
+    mac: macChestEntry(
+      Buffer.from(
+        JSON.stringify([
+          ...macFields(3, slot, encryptedPayload, publicAddresses),
+          owner,
+        ]),
+      ),
+    ).toString('hex'),
+  });
+
+  // Entries stored before owners were recorded
+  const sealLegacy = (
     slot: string,
     encryptedPayload: ReturnType<typeof createMockEncryptedPayload>,
     publicAddresses: string[],
@@ -94,17 +132,7 @@ describe('SecretService', () => {
     publicAddresses,
     mac: macChestEntry(
       Buffer.from(
-        JSON.stringify([
-          'wulong-chest-entry',
-          2,
-          slot,
-          1,
-          encryptedPayload.recipients.map((r) => [r.publicKey, r.ciphertext]),
-          encryptedPayload.encryptedData,
-          encryptedPayload.iv,
-          encryptedPayload.authTag,
-          publicAddresses,
-        ]),
+        JSON.stringify(macFields(2, slot, encryptedPayload, publicAddresses)),
       ),
     ).toString('hex'),
   });
@@ -756,6 +784,60 @@ describe('SecretService', () => {
         ).not.toHaveBeenCalled();
       });
 
+      it('rejects an owner changed on disk', async () => {
+        const entry = seal(testSlot, createMockEncryptedPayload(), [
+          testAddress,
+        ]);
+        entry.owner = attacker;
+        chestWith({ [testSlot]: entry });
+
+        await expect(service.access(testSlot, testAddress)).rejects.toThrow(
+          new NotFoundException('Slot not found'),
+        );
+      });
+
+      it('rejects a current entry without an owner', async () => {
+        const entry: Partial<ReturnType<typeof seal>> = seal(
+          testSlot,
+          createMockEncryptedPayload(),
+          [testAddress],
+        );
+        delete entry.owner;
+        chestWith({ [testSlot]: entry });
+
+        await expect(service.access(testSlot, testAddress)).rejects.toThrow(
+          new NotFoundException('Slot not found'),
+        );
+      });
+
+      it('accesses an entry stored before owners were recorded', async () => {
+        chestWith({
+          [testSlot]: sealLegacy(testSlot, createMockEncryptedPayload(), [
+            testAddress,
+          ]),
+        });
+
+        await expect(service.access(testSlot, testAddress)).resolves.toBe(
+          testSecret,
+        );
+      });
+
+      it('rejects a legacy entry given an owner on disk', async () => {
+        chestWith({
+          [testSlot]: {
+            ...sealLegacy(testSlot, createMockEncryptedPayload(), [
+              testAddress,
+            ]),
+            version: 3,
+            owner: testAddress,
+          },
+        });
+
+        await expect(service.access(testSlot, testAddress)).rejects.toThrow(
+          new NotFoundException('Slot not found'),
+        );
+      });
+
       it('rejects a payload swapped on disk', async () => {
         const entry = seal(testSlot, createMockEncryptedPayload(), [
           testAddress,
@@ -817,9 +899,13 @@ describe('SecretService', () => {
               string,
             ]
           )[1],
-        ) as Record<string, { version: number; encryptedPayload: object }>;
+        ) as Record<
+          string,
+          { version: number; encryptedPayload: object; owner: string }
+        >;
 
-        expect(written[slot].version).toBe(2);
+        expect(written[slot].version).toBe(3);
+        expect(written[slot].owner).toBe(testAddress);
         expect(written[slot].encryptedPayload).not.toHaveProperty('extra');
 
         jest.spyOn(fs, 'existsSync').mockReturnValue(true);

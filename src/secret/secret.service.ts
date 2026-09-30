@@ -27,13 +27,16 @@ import {
   WRAPPED_KEY_LENGTH,
 } from '../encryption/mlkem-encryption.service';
 
-const CHEST_ENTRY_VERSION = 2;
+const CHEST_ENTRY_VERSION = 3;
+// Entries stored before owners were recorded: still readable, owned by none
+const LEGACY_CHEST_ENTRY_VERSION = 2;
 
 interface SecretEntry {
-  version: typeof CHEST_ENTRY_VERSION;
+  version: typeof CHEST_ENTRY_VERSION | typeof LEGACY_CHEST_ENTRY_VERSION;
   encryptedPayload: MultiRecipientEncryptedPayload; // Multi-recipient encrypted data
   publicAddresses: string[]; // Authorized SIWE addresses
-  mac: string; // Hex HMAC binding the slot, payload and addresses (see entryMac)
+  owner?: string; // Lowercase address that stored the entry, from version 3
+  mac: string; // Hex HMAC binding the slot, payload, addresses and owner (see entryMac)
 }
 
 const DEFAULT_CHEST_MAX_BYTES = 50 * 1024 * 1024;
@@ -247,7 +250,12 @@ export class SecretService implements OnModuleInit {
     // Serialize read-modify-write so concurrent stores don't overwrite each other
     await this.withWriteLock(() =>
       this.commit({
-        [slot]: this.seal(slot, encryptedPayload, normalizedAddresses),
+        [slot]: this.seal(
+          slot,
+          encryptedPayload,
+          normalizedAddresses,
+          callerAddress.toLowerCase(),
+        ),
       }),
     );
 
@@ -374,12 +382,13 @@ export class SecretService implements OnModuleInit {
 
   /**
    * Builds a chest entry holding only the payload's known fields, with its
-   * MAC.
+   * owner and MAC.
    */
   private seal(
     slot: string,
     payload: MultiRecipientEncryptedPayload,
     publicAddresses: string[],
+    owner: string,
   ): SecretEntry {
     const encryptedPayload: MultiRecipientEncryptedPayload = {
       ...(payload.version === undefined ? {} : { version: payload.version }),
@@ -391,35 +400,37 @@ export class SecretService implements OnModuleInit {
       iv: payload.iv,
       authTag: payload.authTag,
     };
-    return {
+    const entry = {
       version: CHEST_ENTRY_VERSION,
       encryptedPayload,
       publicAddresses,
-      mac: this.entryMac(slot, encryptedPayload, publicAddresses).toString(
-        'hex',
-      ),
+      owner,
     };
+    return { ...entry, mac: this.entryMac(slot, entry).toString('hex') };
   }
 
   /**
-   * Checks an entry read from disk: it must be a current version entry whose
-   * MAC matches its slot, payload and addresses. Malformed entries fail.
+   * Checks an entry read from disk: it must be a current or legacy version
+   * entry whose MAC matches its slot, payload, addresses and, from version
+   * 3, owner. Malformed entries fail.
    */
   private isAuthentic(slot: string, entry: unknown): entry is SecretEntry {
     try {
       const candidate = entry as SecretEntry;
       if (
-        candidate?.version !== CHEST_ENTRY_VERSION ||
+        (candidate?.version !== CHEST_ENTRY_VERSION ||
+          typeof candidate.owner !== 'string') &&
+        candidate?.version !== LEGACY_CHEST_ENTRY_VERSION
+      ) {
+        return false;
+      }
+      if (
         typeof candidate.mac !== 'string' ||
         !Array.isArray(candidate.publicAddresses)
       ) {
         return false;
       }
-      const expected = this.entryMac(
-        slot,
-        candidate.encryptedPayload,
-        candidate.publicAddresses,
-      );
+      const expected = this.entryMac(slot, candidate);
       const actual = Buffer.from(candidate.mac, 'hex');
       return (
         actual.length === expected.length && timingSafeEqual(actual, expected)
@@ -431,26 +442,29 @@ export class SecretService implements OnModuleInit {
 
   /**
    * MACs the fixed-order JSON encoding of everything that decides who can
-   * decrypt what: the entry version, the slot, every payload field and the
-   * addresses. Changing it makes every stored entry unreadable.
+   * decrypt, delete or be charged for what: the entry version, the slot,
+   * every payload field, the addresses and, from version 3, the owner.
+   * Changing it makes every stored entry unreadable.
    */
-  private entryMac(
-    slot: string,
-    payload: MultiRecipientEncryptedPayload,
-    publicAddresses: string[],
-  ): Buffer {
-    const encoded = JSON.stringify([
+  private entryMac(slot: string, entry: Omit<SecretEntry, 'mac'>): Buffer {
+    const payload = entry.encryptedPayload;
+    const fields: unknown[] = [
       'wulong-chest-entry',
-      CHEST_ENTRY_VERSION,
+      entry.version,
       slot,
       payload.version ?? 1,
       payload.recipients.map((r) => [r.publicKey, r.ciphertext]),
       payload.encryptedData,
       payload.iv,
       payload.authTag,
-      publicAddresses,
-    ]);
-    return this.keys.macChestEntry(Buffer.from(encoded, 'utf-8'));
+      entry.publicAddresses,
+    ];
+    if (entry.version === CHEST_ENTRY_VERSION) {
+      fields.push(entry.owner);
+    }
+    return this.keys.macChestEntry(
+      Buffer.from(JSON.stringify(fields), 'utf-8'),
+    );
   }
 
   /**
