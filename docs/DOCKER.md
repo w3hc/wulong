@@ -206,6 +206,7 @@ Both modes use the following environment variables (configured in `docker-compos
 
 - `NODE_ENV`: Set to `development` or `production`
 - `SIWE_DOMAIN`: UIs allowed to request a SIWE signature, required in production
+- `SIWE_CHAIN_IDS`: chain ids a SIWE message may name, comma-separated, default `1,8453`
 - `TLS_ALT_NAMES`: gateway hostnames of the in-enclave TLS certificate, required in production unless `ALLOW_TLS_OUTSIDE_ENCLAVE=true`
 - `CORS_ORIGINS`: browser origins allowed to call the API
 

@@ -6,7 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-30
+
 ### Added
+
+- `SIWE_CHAIN_IDS` (default `1,8453`): chain ids a SIWE message may name ([#53](https://github.com/w3hc/wulong/issues/53)).
+- A SIWE nonce key, derived from `GetKey("wulong/siwe-nonce/v1", "ed25519")`. See [`docs/KEY_DERIVATION.md`](docs/KEY_DERIVATION.md#siwe-nonce-key) ([#53](https://github.com/w3hc/wulong/issues/53)).
 
 - `DELETE /chest/:slot`: deletes a secret the SIWE caller stored and frees their quota. Other addresses get the same `404` as for a missing slot ([#52](https://github.com/w3hc/wulong/issues/52)).
 - `CHEST_ADDRESS_QUOTA_BYTES` (default 1 MiB): each address may store this many bytes of chest entries; a store past it is rejected with `413` ([#52](https://github.com/w3hc/wulong/issues/52)).
@@ -27,6 +32,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `CORS_ORIGINS`: comma-separated origins of the browser UIs allowed to call the API. Unset allows none; startup fails on an entry that is not an exact origin ([#41](https://github.com/w3hc/wulong/issues/41)).
 
 ### Changed
+
+- SIWE nonces are stateless: each carries its issue time and an HMAC over it and the signing address under the SIWE nonce key, so `POST /auth/nonce` stores nothing. Only used nonces are remembered, for their 5-minute lifetime, and every instance accepts the others' nonces ([#53](https://github.com/w3hc/wulong/issues/53)).
 
 - The chest is read once and kept in memory; writes go to disk (and the anchor) before memory is updated, and access no longer reads the file ([#52](https://github.com/w3hc/wulong/issues/52)).
 - Chest entries are `version: 3` and record the address that stored them as `owner`, covered by the MAC. `version: 2` entries stay readable, count against no quota and can be deleted by any of their addresses. See [`docs/KEY_DERIVATION.md`](docs/KEY_DERIVATION.md#authenticating-chest-entries) ([#52](https://github.com/w3hc/wulong/issues/52)).
@@ -53,6 +60,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - The unused legacy single-recipient `encrypt` and `decrypt` methods of the ML-KEM service, which used the raw shared secret as the AES key ([#43](https://github.com/w3hc/wulong/issues/43)).
 
 ### Fixed
+
+- `POST /auth/nonce` refused everyone once 10,000 nonces were pending, and needs no login, so a couple hundred IPs could keep everyone from signing in. The cap is gone along with the nonce store ([#53](https://github.com/w3hc/wulong/issues/53)).
+- A SIWE message's `uri` and `chainId` were never checked. The `uri` must now be on an origin whose host is in `SIWE_DOMAIN`, and the `chainId` in `SIWE_CHAIN_IDS` ([#53](https://github.com/w3hc/wulong/issues/53)).
 
 - The chest access list was stored unauthenticated next to the ciphertext, so anyone able to write the data volume could add their address and have the enclave decrypt the entry through the normal SIWE flow ([#51](https://github.com/w3hc/wulong/issues/51)).
 - `POST /chest/store` rejected every v2 payload: it required 1600-byte recipient ciphertexts whatever the version. v2 now requires 1608 bytes and v1 1600 ([#51](https://github.com/w3hc/wulong/issues/51)).
