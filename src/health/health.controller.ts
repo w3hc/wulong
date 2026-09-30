@@ -1,4 +1,5 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, ServiceUnavailableException } from '@nestjs/common';
+import { KeyDerivationService } from '../keys/key-derivation.service';
 
 /**
  * Health check endpoint for monitoring and load balancers.
@@ -6,6 +7,8 @@ import { Controller, Get } from '@nestjs/common';
  */
 @Controller('health')
 export class HealthController {
+  constructor(private readonly keys: KeyDerivationService) {}
+
   /**
    * Basic health check endpoint.
    * @returns Health status object
@@ -19,13 +22,16 @@ export class HealthController {
   }
 
   /**
-   * Readiness probe - indicates if the service is ready to accept traffic.
+   * Readiness probe - ready only once the keys are derived, since every
+   * store and access needs them.
    * @returns Readiness status
+   * @throws ServiceUnavailableException (503) until the keys are derived
    */
   @Get('ready')
   ready() {
-    // In a real implementation, check if KMS secrets are loaded,
-    // database connections are ready, etc.
+    if (!this.keys.isAvailable()) {
+      throw new ServiceUnavailableException('Not ready');
+    }
     return {
       status: 'ready',
       timestamp: new Date().toISOString(),

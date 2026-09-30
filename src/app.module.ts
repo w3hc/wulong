@@ -4,13 +4,13 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
-import { SecretsService } from './config/secrets.service';
 import { AttestationModule } from './attestation/attestation.module';
 import { HealthController } from './health/health.controller';
 import { validateEnvironment } from './config/env.validation';
 import { SecretModule } from './secret/secret.module';
 import { AuthModule } from './auth/auth.module';
 import { TlsModule } from './tls/tls.module';
+import { KeysModule } from './keys/keys.module';
 import { TimingProtectionInterceptor } from './interceptors/timing-protection.interceptor';
 import { MetadataSanitizerInterceptor } from './interceptors/metadata-sanitizer.interceptor';
 import { RequestSanitizerMiddleware } from './middleware/request-sanitizer.middleware';
@@ -34,18 +34,17 @@ import { RequestSanitizerMiddleware } from './middleware/request-sanitizer.middl
     }),
     AttestationModule,
     AuthModule,
+    KeysModule,
     SecretModule,
     TlsModule,
   ],
   controllers: [AppController, HealthController],
   providers: [
     AppService,
-    SecretsService,
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_INTERCEPTOR, useClass: TimingProtectionInterceptor },
     { provide: APP_INTERCEPTOR, useClass: MetadataSanitizerInterceptor },
   ],
-  exports: [SecretsService],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {

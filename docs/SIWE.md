@@ -505,7 +505,7 @@ The tests verify:
 
 ## Swagger UI
 
-The SIWE endpoints are documented in the Swagger UI at:
+The SIWE endpoints are documented in the Swagger UI, outside production, at:
 ```
 https://localhost:3000
 ```

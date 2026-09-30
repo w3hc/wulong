@@ -416,7 +416,7 @@ curl -k https://localhost:3000/health
 
 ### GET /health/ready
 
-Readiness probe for orchestration systems (Kubernetes, etc.).
+Readiness probe for orchestration systems (Kubernetes, etc.). Ready once the keys are derived from the dstack KMS, since every `store` and `access` needs them.
 
 **Authentication:** None
 
@@ -424,18 +424,14 @@ Readiness probe for orchestration systems (Kubernetes, etc.).
 
 ```typescript
 {
-  status: 'ready' | 'not ready';
-  checks: {
-    database?: boolean;
-    tee?: boolean;
-    encryption?: boolean;
-  };
+  status: 'ready';
+  timestamp: string;
 }
 ```
 
 **Status Codes:**
-- `200 OK` - Service is ready to accept traffic
-- `503 Service Unavailable` - Service is not ready
+- `200 OK` - Keys are derived, the service accepts traffic
+- `503 Service Unavailable` - Keys are not derived (`{ "statusCode": 503, "message": "Not ready" }`)
 
 **Example:**
 
@@ -445,10 +441,7 @@ curl -k https://localhost:3000/health/ready
 # Response
 {
   "status": "ready",
-  "checks": {
-    "tee": true,
-    "encryption": true
-  }
+  "timestamp": "2026-09-30T12:00:00.000Z"
 }
 ```
 
@@ -553,7 +546,7 @@ Retry-After: 42
 
 ## Swagger/OpenAPI Documentation
 
-Interactive API documentation is available at:
+Interactive API documentation is available outside production at:
 
 ```
 https://localhost:3000

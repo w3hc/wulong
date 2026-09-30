@@ -14,7 +14,6 @@ describe('Application (e2e)', () => {
   beforeAll(async () => {
     // Set test environment variables
     process.env.NODE_ENV = 'test';
-    process.env.KMS_URL = 'http://localhost:3001';
     // Keep the rate limiter out of the way; throttle.e2e-spec.ts covers it
     process.env.THROTTLE_LIMIT = '1000';
 
@@ -45,14 +44,8 @@ describe('Application (e2e)', () => {
         });
     });
 
-    it('/health/ready (GET) - should return ready status', () => {
-      return request(app.getHttpServer())
-        .get('/health/ready')
-        .expect(200)
-        .expect((res) => {
-          expect(res.body).toHaveProperty('status', 'ready');
-          expect(res.body).toHaveProperty('timestamp');
-        });
+    it('/health/ready (GET) - should be unavailable without derived keys', () => {
+      return request(app.getHttpServer()).get('/health/ready').expect(503);
     });
 
     it('/health/live (GET) - should return alive status', () => {

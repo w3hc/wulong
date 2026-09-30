@@ -29,7 +29,6 @@ Edit `.env` and configure:
 
 ```bash
 NODE_ENV=development
-KMS_URL=https://your-kms.example.com/release
 
 # Origins of the browser UIs allowed to call the API
 CORS_ORIGINS=http://localhost:5173
@@ -114,13 +113,13 @@ https://localhost:3000
 
 **Important**: Accept the self-signed certificate warning in your browser.
 
-The Swagger UI provides interactive API documentation with all available endpoints.
+The Swagger UI provides interactive API documentation with all available endpoints. It is not served in production.
 
 ### API Endpoints
 
 Key endpoints:
 
-- `GET /` - Swagger UI documentation
+- `GET /` - Swagger UI documentation, outside production only
 - `GET /health` - Health check
 - `GET /chest/attestation` - TEE attestation and public key
 - `POST /chest/store` - Store encrypted data (SIWE)
@@ -231,7 +230,9 @@ The application behaves differently based on `NODE_ENV`:
 - Sanitized logging (no sensitive data)
 - CORS allows only the origins in `CORS_ORIGINS` (none if unset)
 - Optimized build with only production dependencies
-- Swagger UI still accessible (consider disabling in production)
+- Swagger UI not served
+- Startup fails if `SIWE_DOMAIN` is missing, or `TLS_ALT_NAMES` unless `ALLOW_TLS_OUTSIDE_ENCLAVE=true`
+- Logs redact secret values and key-shaped strings
 
 ## Troubleshooting
 

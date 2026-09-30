@@ -9,7 +9,6 @@ services:
       - "3000:3000"
     environment:
       - NODE_ENV=development
-      - KMS_URL=https://your-kms.example.com/release
       # Keys are derived from the dstack simulator, e.g. http://host.docker.internal:8090
       - DSTACK_SIMULATOR_ENDPOINT=${DSTACK_SIMULATOR_ENDPOINT}
     volumes:

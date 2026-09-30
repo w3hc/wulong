@@ -74,7 +74,6 @@ describe('Chest Endpoints (e2e)', () => {
   beforeAll(async () => {
     // Set test environment variables
     process.env.NODE_ENV = 'test';
-    process.env.KMS_URL = 'http://localhost:3001';
     // Keep the rate limiter out of the way; throttle.e2e-spec.ts covers it
     process.env.THROTTLE_LIMIT = '1000';
 
