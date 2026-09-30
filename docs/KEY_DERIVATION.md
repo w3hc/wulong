@@ -192,13 +192,15 @@ The operator controls the disk, so without an anchor they could restore an older
 The anchor stops rollback, but not an edit written while anchoring is off, and the list of addresses that may make the enclave decrypt an entry sits in plaintext next to the ciphertext. Anyone who can write the volume could add their address to it. Each entry is therefore sealed under the [chest MAC key](#chest-mac-key):
 
 ```text
-entry = { version: 2, encryptedPayload, publicAddresses, mac }
-mac   = HMAC-SHA256(mac_key, JSON(["wulong-chest-entry", 2, slot, payload.version ?? 1,
+entry = { version: 3, encryptedPayload, publicAddresses, owner, mac }
+mac   = HMAC-SHA256(mac_key, JSON(["wulong-chest-entry", 3, slot, payload.version ?? 1,
                                    [[publicKey, ciphertext], ...], encryptedData, iv, authTag,
-                                   publicAddresses]))
+                                   publicAddresses, owner]))
 ```
 
-- The MAC binds the slot, every payload field and the addresses, so an edited list, a swapped payload or an entry moved to another slot fails. It is checked, in constant time, before any decryption, and a failing entry answers `404 Slot not found` like a missing one.
+- `owner` is the lowercase address that stored the entry. It alone may delete it, and the entry's size counts against its quota.
+- The MAC binds the slot, every payload field, the addresses and the owner, so an edited list, a swapped payload, a changed owner or an entry moved to another slot fails. It is checked, in constant time, before any decryption, and a failing entry answers `404 Slot not found` like a missing one.
+- `version: 2` entries, stored before owners were recorded, have no `owner` and omit it from the MAC. They stay readable, count against no quota, and can be deleted by any of their addresses.
 - Entries written before versioning have no MAC and cannot be accessed. They are not migrated: sealing them would bless whatever list is on disk today. Boot logs how many entries fail authentication; their owners must store them again.
 - `store` keeps only the payload's known fields, and requires the server's ML-KEM key among the recipients and every recipient key to be 1568 bytes.
 

@@ -8,6 +8,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- `DELETE /chest/:slot`: deletes a secret the SIWE caller stored and frees their quota. Other addresses get the same `404` as for a missing slot ([#52](https://github.com/w3hc/wulong/issues/52)).
+- `CHEST_ADDRESS_QUOTA_BYTES` (default 1 MiB): each address may store this many bytes of chest entries; a store past it is rejected with `413` ([#52](https://github.com/w3hc/wulong/issues/52)).
+
 - A chest MAC key, derived from `GetKey("wulong/chest-mac/v1", "ed25519")`. See [`docs/KEY_DERIVATION.md`](docs/KEY_DERIVATION.md#chest-mac-key) ([#51](https://github.com/w3hc/wulong/issues/51)).
 
 - An enclave-derived relayer wallet: its key comes from `GetKey("wulong/relayer/evm/v1", "secp256k1")` and is used directly as the private key. Its address is in the key manifest and `report_data`, and `GET /chest/attestation` serves `relayerAddress`, `relayerPublicKey` and `relayerSignatureChain`. No endpoint signs anything with it ([#49](https://github.com/w3hc/wulong/issues/49)).
@@ -24,6 +27,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `CORS_ORIGINS`: comma-separated origins of the browser UIs allowed to call the API. Unset allows none; startup fails on an entry that is not an exact origin ([#41](https://github.com/w3hc/wulong/issues/41)).
 
 ### Changed
+
+- The chest is read once and kept in memory; writes go to disk (and the anchor) before memory is updated, and access no longer reads the file ([#52](https://github.com/w3hc/wulong/issues/52)).
+- Chest entries are `version: 3` and record the address that stored them as `owner`, covered by the MAC. `version: 2` entries stay readable, count against no quota and can be deleted by any of their addresses. See [`docs/KEY_DERIVATION.md`](docs/KEY_DERIVATION.md#authenticating-chest-entries) ([#52](https://github.com/w3hc/wulong/issues/52)).
 
 - Chest entries are versioned (`version: 2`) and carry a MAC over their slot, payload and addresses under the chest MAC key, checked before decrypting. An entry whose access list or payload was altered on disk answers `404` like a missing one. See [`docs/KEY_DERIVATION.md`](docs/KEY_DERIVATION.md#authenticating-chest-entries) ([#51](https://github.com/w3hc/wulong/issues/51)).
 - **Breaking:** chest entries stored before this change cannot be accessed and must be stored again. They are not migrated, since that would trust their unauthenticated access list; boot logs how many there are ([#51](https://github.com/w3hc/wulong/issues/51)).

@@ -19,6 +19,7 @@ https://localhost:3000
     - [GET /chest/attestation](#get-chestattestation)
     - [POST /chest/store](#post-cheststore)
     - [GET /chest/access/:slot](#get-chestaccessslot)
+    - [DELETE /chest/:slot](#delete-chestslot)
   - [Authentication Endpoints](#authentication-endpoints)
     - [POST /auth/nonce](#post-authnonce)
   - [Health Check Endpoints](#health-check-endpoints)
@@ -169,6 +170,8 @@ x-siwe-signature: <hex signature>
 - `400 Bad Request` - Invalid request (empty secret, invalid addresses, the server's `mlkemPublicKey` not among the recipients, a recipient key that is not 1568 bytes, a ciphertext of the wrong size for the payload version, etc.). The message states the rule broken, never the offending value
 - `401 Unauthorized` - Missing or invalid SIWE authentication
 - `403 Forbidden` - Caller is not one of `publicAddresses`
+- `413 Payload Too Large` - `Chest quota exceeded for this address`: the caller's entries would exceed `CHEST_ADDRESS_QUOTA_BYTES` (1 MiB by default). Each entry is charged to the address that stored it, not to the other `publicAddresses`; deleting one frees its bytes
+- `507 Insufficient Storage` - The chest would exceed `CHEST_MAX_BYTES`
 
 **Example:**
 
@@ -325,6 +328,36 @@ console.log('Secret:', secret);
 - Case-insensitive address matching (checksummed or lowercase both work)
 
 **See also:** [SIWE Authentication Guide](SIWE.md)
+
+---
+
+### DELETE /chest/:slot
+
+Delete a stored secret and free the caller's quota.
+
+**Authentication:** Required (SIWE)
+
+**Path Parameters:**
+- `slot` - The slot identifier returned from `/chest/store`
+
+**Headers:**
+```
+x-siwe-message: <base64-encoded SIWE message>
+x-siwe-signature: <hex signature>
+```
+
+**Status Codes:**
+- `204 No Content` - Secret deleted; accessing or deleting the slot again answers `404`
+- `401 Unauthorized` - Missing or invalid SIWE authentication
+- `404 Not Found` - `Slot not found`: the slot is not 64 lowercase hex characters, does not exist, fails authentication, or the caller did not store it. Other `publicAddresses` can access the secret but not delete it. An entry stored before owners were recorded (`version: 2`) can be deleted by any of its `publicAddresses`
+
+**Example:**
+
+```bash
+curl -k -X DELETE https://localhost:3000/chest/a1b2c3d4... \
+  -H "x-siwe-message: $(echo -n "$MESSAGE" | base64)" \
+  -H "x-siwe-signature: $SIGNATURE"
+```
 
 ---
 
@@ -537,7 +570,9 @@ All endpoints return consistent error responses:
 - `401 Unauthorized` - Missing or invalid authentication
 - `403 Forbidden` - Authenticated but not authorized
 - `404 Not Found` - Resource does not exist
+- `413 Payload Too Large` - The caller's storage quota is used up
 - `500 Internal Server Error` - Unexpected server error
+- `507 Insufficient Storage` - The chest is full
 
 Every response, success or error, also:
 
