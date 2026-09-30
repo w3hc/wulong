@@ -497,6 +497,95 @@ describe('SecretService', () => {
       expect(fs.promises.rename).not.toHaveBeenCalled();
     });
 
+    describe('per-address quota', () => {
+      const address = '0xbfbaa5a59e3b6c06aff9c975092b8705f804fa1c';
+      const other = '0x70997970c51812dc3a010c7d01b50e0d17dc79c8';
+      const slot = 'a'.repeat(64);
+      const payload = createMockEncryptedPayload();
+      const size = (entry: object) => Buffer.byteLength(JSON.stringify(entry));
+      const withQuota = (bytes: number) => {
+        process.env.CHEST_ADDRESS_QUOTA_BYTES = String(bytes);
+        const quotaService = new SecretService(
+          mockTeePlatformService as unknown as TeePlatformService,
+          mockMlKemEncryptionService as unknown as MlKemEncryptionService,
+          mockKeyDerivationService as unknown as KeyDerivationService,
+          mockTeeTlsService as unknown as TeeTlsService,
+          mockRelayerService as unknown as RelayerService,
+        );
+        delete process.env.CHEST_ADDRESS_QUOTA_BYTES;
+        return quotaService;
+      };
+      const quotaFor = (entries: number) =>
+        entries * size(seal(slot, payload, [address]));
+
+      it('rejects with 413 once the caller has used their quota', async () => {
+        const quotaService = withQuota(quotaFor(2));
+
+        await quotaService.store(payload, [address], address);
+        await quotaService.store(payload, [address], address);
+        await expect(
+          quotaService.store(payload, [address], address),
+        ).rejects.toMatchObject({ status: HttpStatus.PAYLOAD_TOO_LARGE });
+        expect(fs.promises.writeFile).toHaveBeenCalledTimes(2);
+      });
+
+      it('charges the caller only, not the other listed addresses', async () => {
+        const quotaService = withQuota(
+          size(seal(slot, payload, [address, other])),
+        );
+
+        await quotaService.store(payload, [address, other], address);
+        await expect(
+          quotaService.store(payload, [other], other),
+        ).resolves.toEqual(expect.any(String));
+        await expect(
+          quotaService.store(payload, [address], address),
+        ).rejects.toMatchObject({ status: HttpStatus.PAYLOAD_TOO_LARGE });
+      });
+
+      it('counts the entries already in the chest', async () => {
+        jest.spyOn(fs, 'existsSync').mockReturnValue(true);
+        jest
+          .spyOn(fs.promises, 'readFile')
+          .mockResolvedValue(
+            JSON.stringify({ [slot]: seal(slot, payload, [address]) }),
+          );
+        const quotaService = withQuota(quotaFor(1));
+
+        await expect(
+          quotaService.store(payload, [address], address),
+        ).rejects.toMatchObject({ status: HttpStatus.PAYLOAD_TOO_LARGE });
+      });
+
+      it('charges nobody for entries without an owner or failing authentication', async () => {
+        const tampered = seal('b'.repeat(64), payload, [address]);
+        tampered.publicAddresses.push(other);
+        jest.spyOn(fs, 'existsSync').mockReturnValue(true);
+        jest.spyOn(fs.promises, 'readFile').mockResolvedValue(
+          JSON.stringify({
+            [slot]: sealLegacy(slot, payload, [address]),
+            ['b'.repeat(64)]: tampered,
+          }),
+        );
+        const quotaService = withQuota(quotaFor(1));
+
+        await expect(
+          quotaService.store(payload, [address], address),
+        ).resolves.toEqual(expect.any(String));
+      });
+
+      it('defaults to 1 MiB', async () => {
+        const big = {
+          ...payload,
+          encryptedData: Buffer.alloc(800 * 1024).toString('base64'),
+        };
+
+        await expect(
+          service.store(big, [address], address),
+        ).rejects.toMatchObject({ status: HttpStatus.PAYLOAD_TOO_LARGE });
+      });
+    });
+
     it('should write to CHEST_PATH when set', async () => {
       process.env.CHEST_PATH = '/data/chest.json';
       const configuredService = new SecretService(
