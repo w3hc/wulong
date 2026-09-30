@@ -46,6 +46,30 @@ describe('Environment Validation', () => {
     });
   });
 
+  describe('relayer', () => {
+    it.each([
+      ['WULONG_ANCHOR_ADDRESS', '0x1234'],
+      ['BASE_RPC_URL', 'not a url'],
+      ['RELAYER_MAX_BALANCE_WEI', '-1'],
+      ['RELAYER_MAX_BALANCE_WEI', '1e18'],
+    ])('should reject an invalid %s (%s)', (name, value) => {
+      expect(() =>
+        validateEnvironment({ NODE_ENV: 'test', [name]: value }),
+      ).toThrow('Environment validation failed');
+    });
+
+    it('should accept a relayer configuration', () => {
+      expect(() =>
+        validateEnvironment({
+          NODE_ENV: 'test',
+          BASE_RPC_URL: 'http://localhost:8545',
+          WULONG_ANCHOR_ADDRESS: '0x' + '77'.repeat(20),
+          RELAYER_MAX_BALANCE_WEI: '10000000000000000',
+        }),
+      ).not.toThrow();
+    });
+  });
+
   describe('required in production', () => {
     it.each(['SIWE_DOMAIN', 'TLS_ALT_NAMES'])(
       'should reject a missing %s',
@@ -74,6 +98,23 @@ describe('Environment Validation', () => {
       };
 
       expect(() => validateEnvironment(config)).not.toThrow();
+    });
+
+    it('should require BASE_RPC_URL with an anchor address', () => {
+      const config = {
+        ...production,
+        WULONG_ANCHOR_ADDRESS: '0x' + '77'.repeat(20),
+      };
+
+      expect(() => validateEnvironment(config)).toThrow(
+        'BASE_RPC_URL must be set in production',
+      );
+      expect(() =>
+        validateEnvironment({
+          ...config,
+          BASE_RPC_URL: 'https://mainnet.base.org',
+        }),
+      ).not.toThrow();
     });
 
     it('should not require them outside production', () => {

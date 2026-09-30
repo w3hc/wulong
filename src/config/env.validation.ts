@@ -1,10 +1,13 @@
 import { plainToInstance } from 'class-transformer';
 import {
+  IsEthereumAddress,
   IsEnum,
   IsIn,
   IsInt,
+  IsNumberString,
   IsOptional,
   IsString,
+  IsUrl,
   Min,
   validateSync,
 } from 'class-validator';
@@ -59,6 +62,21 @@ export class EnvironmentVariables {
   @IsOptional()
   @IsIn(['true', 'false'])
   ALLOW_TLS_OUTSIDE_ENCLAVE?: string;
+
+  // Base JSON-RPC endpoint the relayer reads and sends through
+  @IsOptional()
+  @IsUrl({ require_tld: false, protocols: ['http', 'https'] })
+  BASE_RPC_URL?: string;
+
+  // WulongAnchor contract the relayer anchors the chest to; unset disables rollback protection
+  @IsOptional()
+  @IsEthereumAddress()
+  WULONG_ANCHOR_ADDRESS?: string;
+
+  // Relayer balance above which a warning is logged, in wei
+  @IsOptional()
+  @IsNumberString({ no_symbols: true })
+  RELAYER_MAX_BALANCE_WEI?: string;
 }
 
 /**
@@ -103,10 +121,14 @@ export function validateEnvironment(config: Record<string, unknown>) {
 // key derivation aborts startup when it cannot reach it
 function requiredInProduction(
   config: EnvironmentVariables,
-): ('SIWE_DOMAIN' | 'TLS_ALT_NAMES')[] {
-  return config.ALLOW_TLS_OUTSIDE_ENCLAVE === 'true'
-    ? ['SIWE_DOMAIN']
-    : ['SIWE_DOMAIN', 'TLS_ALT_NAMES'];
+): ('SIWE_DOMAIN' | 'TLS_ALT_NAMES' | 'BASE_RPC_URL')[] {
+  return [
+    'SIWE_DOMAIN' as const,
+    ...(config.ALLOW_TLS_OUTSIDE_ENCLAVE === 'true'
+      ? []
+      : ['TLS_ALT_NAMES' as const]),
+    ...(config.WULONG_ANCHOR_ADDRESS ? ['BASE_RPC_URL' as const] : []),
+  ];
 }
 
 // Comma-separated lists count as set only if they hold at least one entry

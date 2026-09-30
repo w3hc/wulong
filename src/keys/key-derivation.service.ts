@@ -2,6 +2,8 @@ import { hkdfSync } from 'crypto';
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import {
   SigningKey,
+  Transaction,
+  TransactionLike,
   TypedDataEncoder,
   computeAddress,
   getBytes,
@@ -171,6 +173,20 @@ export class KeyDerivationService implements OnModuleInit {
 
   getRelayerSignatureChain(): Uint8Array[] {
     return this.relayerSignatureChain;
+  }
+
+  /**
+   * Signs a transaction from the relayer wallet. Only RelayerService calls
+   * this, for transactions it builds itself: no endpoint reaches it.
+   * @returns The serialized signed transaction
+   */
+  signRelayerTransaction(request: TransactionLike<string>): string {
+    if (!this.relayer) {
+      throw new Error('Relayer key not derived');
+    }
+    const tx = Transaction.from(request);
+    tx.signature = this.relayer.sign(tx.unsignedHash);
+    return tx.serialized;
   }
 
   /** The key manifest signed at boot, for this CVM's app id. */

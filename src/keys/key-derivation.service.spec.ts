@@ -1,6 +1,7 @@
 import { createHash, hkdfSync } from 'crypto';
 import {
   SigningKey,
+  Transaction,
   computeAddress,
   getBytes,
   hexlify,
@@ -177,6 +178,23 @@ describe('KeyDerivationService', () => {
       );
     });
 
+    it('signs transactions from the relayer address', async () => {
+      const service = await create();
+
+      const signed = service.signRelayerTransaction({
+        type: 2,
+        chainId: 8453n,
+        nonce: 0,
+        to: '0x' + '11'.repeat(20),
+        data: '0x',
+        gasLimit: 21000n,
+        maxFeePerGas: 1n,
+        maxPriorityFeePerGas: 1n,
+      });
+
+      expect(Transaction.from(signed).from).toBe(service.getRelayerAddress());
+    });
+
     it('serves the relayer signature chain', async () => {
       const chain = [new Uint8Array([1]), new Uint8Array([2])];
       const getKey = dstack.getKey.bind(dstack);
@@ -279,6 +297,7 @@ describe('KeyDerivationService', () => {
       expect(() => service.decapsulate(new Uint8Array(1568))).toThrow(
         'not derived',
       );
+      expect(() => service.signRelayerTransaction({})).toThrow('not derived');
     });
   });
 });
