@@ -166,7 +166,7 @@ x-siwe-signature: <hex signature>
 
 **Status Codes:**
 - `201 Created` - Secret stored successfully
-- `400 Bad Request` - Invalid request (empty secret, invalid addresses, etc.). The message states the rule broken, never the offending value
+- `400 Bad Request` - Invalid request (empty secret, invalid addresses, the server's `mlkemPublicKey` not among the recipients, a recipient key that is not 1568 bytes, a ciphertext of the wrong size for the payload version, etc.). The message states the rule broken, never the offending value
 - `401 Unauthorized` - Missing or invalid SIWE authentication
 - `403 Forbidden` - Caller is not one of `publicAddresses`
 
@@ -248,7 +248,7 @@ x-siwe-signature: <hex signature>
 - `200 OK` - Secret retrieved successfully
 - `400 Bad Request` - `Failed to decrypt secret`, whatever the cause; details go to the server log only
 - `401 Unauthorized` - Missing or invalid SIWE authentication
-- `404 Not Found` - `Slot not found`: the slot does not exist, or the caller is not one of its owners. Both answer the same, so a caller cannot probe which slots exist
+- `404 Not Found` - `Slot not found`: the slot is not 64 lowercase hex characters, does not exist, fails authentication (altered on disk, or stored before entries were versioned), or the caller is not one of its owners. All answer the same, so a caller cannot probe which slots exist
 
 **Example:**
 

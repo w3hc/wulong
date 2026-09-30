@@ -12,7 +12,7 @@ import {
 import { getBytes, hexlify, isAddress } from 'ethers';
 import * as fs from 'fs';
 import * as path from 'path';
-import { createHash, randomBytes } from 'crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'crypto';
 import { TeePlatformService } from '../attestation/tee-platform.service';
 import { buildReportData } from '../attestation/report-data';
 import { KeyDerivationService } from '../keys/key-derivation.service';
@@ -20,16 +20,24 @@ import { RelayerService } from '../relayer/relayer.service';
 import { TeeTlsService } from '../tls/tee-tls.service';
 import { AttestationResponseDto } from './dto/attestation-response.dto';
 import {
+  KEM_CIPHERTEXT_LENGTH,
+  MLKEM_PUBLIC_KEY_LENGTH,
   MlKemEncryptionService,
   MultiRecipientEncryptedPayload,
+  WRAPPED_KEY_LENGTH,
 } from '../encryption/mlkem-encryption.service';
 
+const CHEST_ENTRY_VERSION = 2;
+
 interface SecretEntry {
+  version: typeof CHEST_ENTRY_VERSION;
   encryptedPayload: MultiRecipientEncryptedPayload; // Multi-recipient encrypted data
   publicAddresses: string[]; // Authorized SIWE addresses
+  mac: string; // Hex HMAC binding the slot, payload and addresses (see entryMac)
 }
 
 const DEFAULT_CHEST_MAX_BYTES = 50 * 1024 * 1024;
+const SLOT_PATTERN = /^[0-9a-f]{64}$/;
 
 interface SecretData {
   [slot: string]: SecretEntry;
@@ -37,6 +45,9 @@ interface SecretData {
 
 /**
  * Secret service for storing and accessing secrets with owner-based access control.
+ *
+ * Every entry carries a MAC under a key only the enclave holds, so an access
+ * list edited on disk is rejected instead of opening the decryption oracle.
  *
  * When the relayer anchors, every write is committed on chain before it
  * replaces the chest, and the chest is checked against the anchor at boot, so
@@ -67,12 +78,22 @@ export class SecretService implements OnModuleInit {
   }
 
   /**
+   * Verifies the chest against its anchor, then warns about entries that
+   * fail authentication.
+   * @throws Error if the chest does not match the anchor
+   */
+  async onModuleInit(): Promise<void> {
+    await this.verifyAnchor();
+    await this.reportUnauthenticatedEntries();
+  }
+
+  /**
    * Checks the chest against the on-chain anchor: it must be the last
    * anchored version, or the pending one if a crash hit between anchoring and
    * renaming. A chest that was never anchored is anchored as it is.
    * @throws Error if the chest does not match the anchor
    */
-  async onModuleInit(): Promise<void> {
+  private async verifyAnchor(): Promise<void> {
     const anchor = await this.relayer.getLatestAnchor();
     if (!anchor) {
       return;
@@ -102,6 +123,25 @@ export class SecretService implements OnModuleInit {
     throw new Error(
       `The chest does not match anchor ${anchor.seq}: it was rolled back or altered outside the enclave`,
     );
+  }
+
+  /**
+   * Counts the entries that fail authentication, such as chests written
+   * before entries were versioned: they can no longer be accessed.
+   */
+  private async reportUnauthenticatedEntries(): Promise<void> {
+    if (!this.mlkemEncryptionService.isAvailable()) {
+      return;
+    }
+    const secretData = await this.loadSecret();
+    const rejected = Object.entries(secretData).filter(
+      ([slot, entry]) => !this.isAuthentic(slot, entry),
+    ).length;
+    if (rejected > 0) {
+      this.logger.warn(
+        `${rejected} chest entries fail authentication and cannot be accessed: they predate versioned entries or were altered outside the enclave`,
+      );
+    }
   }
 
   /**
@@ -136,14 +176,39 @@ export class SecretService implements OnModuleInit {
       );
     }
 
-    // Validate at least one recipient ciphertext size
+    const version = encryptedPayload.version ?? 1;
+    if (version !== 1 && version !== 2) {
+      throw new BadRequestException('Unsupported encrypted payload version');
+    }
+
+    const ciphertextLength =
+      KEM_CIPHERTEXT_LENGTH + WRAPPED_KEY_LENGTH[version];
     for (const recipient of encryptedPayload.recipients) {
-      const ciphertextBytes = Buffer.from(recipient.ciphertext, 'base64');
-      if (ciphertextBytes.length !== 1568 + 32) {
+      if (
+        Buffer.from(recipient.publicKey, 'base64').length !==
+        MLKEM_PUBLIC_KEY_LENGTH
+      ) {
         throw new BadRequestException(
-          `Invalid ML-KEM ciphertext size: expected ${1568 + 32} bytes`,
+          `Invalid ML-KEM public key size: expected ${MLKEM_PUBLIC_KEY_LENGTH} bytes`,
         );
       }
+      if (
+        Buffer.from(recipient.ciphertext, 'base64').length !== ciphertextLength
+      ) {
+        throw new BadRequestException(
+          `Invalid ML-KEM ciphertext size: expected ${ciphertextLength} bytes`,
+        );
+      }
+    }
+
+    // A chest the server cannot decrypt would only ever answer 400 on access
+    const serverPublicKey = this.mlkemEncryptionService.getPublicKey();
+    if (
+      !encryptedPayload.recipients.some((r) => r.publicKey === serverPublicKey)
+    ) {
+      throw new BadRequestException(
+        'Invalid encrypted payload: the server must be one of the recipients',
+      );
     }
 
     // Validate addresses
@@ -183,10 +248,7 @@ export class SecretService implements OnModuleInit {
       const secretData = await this.loadSecret();
 
       // Store the entry (encrypted at rest - quantum-safe!)
-      secretData[slot] = {
-        encryptedPayload,
-        publicAddresses: normalizedAddresses,
-      };
+      secretData[slot] = this.seal(slot, encryptedPayload, normalizedAddresses);
 
       await this.saveSecret(secretData);
     });
@@ -201,12 +263,15 @@ export class SecretService implements OnModuleInit {
    * @param slot The slot identifier
    * @param callerAddress The address of the caller (from SIWE authentication)
    * @returns The decrypted secret (plaintext)
-   * @throws NotFoundException if slot doesn't exist or caller is not an owner
+   * @throws NotFoundException if slot is malformed, doesn't exist or caller
+   * is not an owner
    * @throws BadRequestException if decryption fails
    */
   async access(slot: string, callerAddress: string): Promise<string> {
-    if (!slot || slot.trim().length === 0) {
-      throw new BadRequestException('Slot cannot be empty');
+    // Only generateSlot's output can exist, so nothing else reaches the
+    // lookup, whatever the chest holds
+    if (typeof slot !== 'string' || !SLOT_PATTERN.test(slot)) {
+      throw new NotFoundException('Slot not found');
     }
 
     if (!callerAddress || !isAddress(callerAddress)) {
@@ -223,11 +288,15 @@ export class SecretService implements OnModuleInit {
     const secretData = await this.loadSecret();
 
     // A slot the caller does not own answers like one that does not exist,
-    // so callers cannot probe which slots are in use
-    const entry = Object.hasOwn(secretData, slot)
+    // so callers cannot probe which slots are in use. An entry that fails
+    // authentication does not exist either: its access list is untrusted.
+    const entry: unknown = Object.hasOwn(secretData, slot)
       ? secretData[slot]
       : undefined;
-    if (!entry?.publicAddresses.includes(callerAddress.toLowerCase())) {
+    if (
+      !this.isAuthentic(slot, entry) ||
+      !entry.publicAddresses.includes(callerAddress.toLowerCase())
+    ) {
       throw new NotFoundException('Slot not found');
     }
 
@@ -304,6 +373,87 @@ export class SecretService implements OnModuleInit {
         .getRelayerSignatureChain()
         .map((link) => hexlify(link)),
     };
+  }
+
+  /**
+   * Builds a chest entry holding only the payload's known fields, with its
+   * MAC.
+   */
+  private seal(
+    slot: string,
+    payload: MultiRecipientEncryptedPayload,
+    publicAddresses: string[],
+  ): SecretEntry {
+    const encryptedPayload: MultiRecipientEncryptedPayload = {
+      ...(payload.version === undefined ? {} : { version: payload.version }),
+      recipients: payload.recipients.map(({ publicKey, ciphertext }) => ({
+        publicKey,
+        ciphertext,
+      })),
+      encryptedData: payload.encryptedData,
+      iv: payload.iv,
+      authTag: payload.authTag,
+    };
+    return {
+      version: CHEST_ENTRY_VERSION,
+      encryptedPayload,
+      publicAddresses,
+      mac: this.entryMac(slot, encryptedPayload, publicAddresses).toString(
+        'hex',
+      ),
+    };
+  }
+
+  /**
+   * Checks an entry read from disk: it must be a current version entry whose
+   * MAC matches its slot, payload and addresses. Malformed entries fail.
+   */
+  private isAuthentic(slot: string, entry: unknown): entry is SecretEntry {
+    try {
+      const candidate = entry as SecretEntry;
+      if (
+        candidate?.version !== CHEST_ENTRY_VERSION ||
+        typeof candidate.mac !== 'string' ||
+        !Array.isArray(candidate.publicAddresses)
+      ) {
+        return false;
+      }
+      const expected = this.entryMac(
+        slot,
+        candidate.encryptedPayload,
+        candidate.publicAddresses,
+      );
+      const actual = Buffer.from(candidate.mac, 'hex');
+      return (
+        actual.length === expected.length && timingSafeEqual(actual, expected)
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * MACs the fixed-order JSON encoding of everything that decides who can
+   * decrypt what: the entry version, the slot, every payload field and the
+   * addresses. Changing it makes every stored entry unreadable.
+   */
+  private entryMac(
+    slot: string,
+    payload: MultiRecipientEncryptedPayload,
+    publicAddresses: string[],
+  ): Buffer {
+    const encoded = JSON.stringify([
+      'wulong-chest-entry',
+      CHEST_ENTRY_VERSION,
+      slot,
+      payload.version ?? 1,
+      payload.recipients.map((r) => [r.publicKey, r.ciphertext]),
+      payload.encryptedData,
+      payload.iv,
+      payload.authTag,
+      publicAddresses,
+    ]);
+    return this.keys.macChestEntry(Buffer.from(encoded, 'utf-8'));
   }
 
   /**

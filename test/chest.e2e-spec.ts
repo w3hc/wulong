@@ -5,6 +5,7 @@ import { App } from 'supertest/types';
 import { AppModule } from './../src/app.module';
 import { Wallet } from 'ethers';
 import { SiweMessage } from 'siwe';
+import { createHmac } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import { MlKemEncryptionService } from '../src/encryption/mlkem-encryption.service';
@@ -12,20 +13,18 @@ import { KeyDerivationService } from '../src/keys/key-derivation.service';
 import { buildReportData } from '../src/attestation/report-data';
 import { TeeTlsService } from '../src/tls/tee-tls.service';
 
+const serverPublicKey = Buffer.alloc(1568).toString('base64');
+
 // Helper to create a valid encrypted payload for testing
 const createMockEncryptedPayload = () => {
   // Create 1600 bytes (1568 KEM + 32 AES key) as base64
   const ciphertextBytes = Buffer.alloc(1600);
   const ciphertextBase64 = ciphertextBytes.toString('base64');
 
-  // Create 1568 bytes public key as base64
-  const publicKeyBytes = Buffer.alloc(1568);
-  const publicKeyBase64 = publicKeyBytes.toString('base64');
-
   return {
     recipients: [
       {
-        publicKey: publicKeyBase64,
+        publicKey: serverPublicKey,
         ciphertext: ciphertextBase64,
       },
     ],
@@ -91,7 +90,7 @@ describe('Chest Endpoints (e2e)', () => {
       .overrideProvider(MlKemEncryptionService)
       .useValue({
         isAvailable: () => true,
-        getPublicKey: () => 'mock-public-key',
+        getPublicKey: () => serverPublicKey,
         decryptMultiRecipient: jest
           .fn()
           .mockResolvedValue('decrypted-test-secret'),
@@ -113,6 +112,8 @@ describe('Chest Endpoints (e2e)', () => {
         getRelayerAddress: () => '0x' + '55'.repeat(20),
         getRelayerSignatureChain: () => [new Uint8Array([0xbb])],
         getRelayerPublicKey: () => new Uint8Array(65).fill(0x04),
+        macChestEntry: (data: Uint8Array) =>
+          createHmac('sha256', 'e2e').update(data).digest(),
       })
       .overrideProvider(TeeTlsService)
       .useValue({

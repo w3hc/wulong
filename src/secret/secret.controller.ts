@@ -125,7 +125,7 @@ export class SecretController {
   @ApiResponse({
     status: 404,
     description:
-      'Not found - slot does not exist or caller is not one of its owners',
+      'Not found - slot is not 64 lowercase hex characters, does not exist, fails authentication, or caller is not one of its owners',
   })
   async access(
     @Param('slot') slot: string,

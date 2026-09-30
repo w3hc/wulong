@@ -20,13 +20,14 @@ Design for how Wulong obtains its long-lived private keys so that they exist onl
 
 ## Summary
 
-Wulong holds three keys, all derived at boot from the [dstack](https://github.com/Dstack-TEE/dstack) KMS with the v1 guest API `GetKey`, and never stored, exported or passed through env:
+Wulong holds four keys, all derived at boot from the [dstack](https://github.com/Dstack-TEE/dstack) KMS with the v1 guest API `GetKey`, and never stored, exported or passed through env:
 
 | Key | `GetKey` domain | Algorithm | Used for |
 | --- | --- | --- | --- |
 | ML-KEM-1024 decapsulation key | `wulong/mlkem-1024/v1` | `ed25519` (used as a 32-byte seed) | Decrypting the server recipient entry of stored secrets |
 | Relayer wallet | `wulong/relayer/evm/v1` | `secp256k1` | Anchoring the chest on chain ([The relayer wallet](#the-relayer-wallet)) |
 | Identity key | `wulong/identity/v1` | `secp256k1` | Signing the key manifest that binds the other public keys |
+| Chest MAC key | `wulong/chest-mac/v1` | `ed25519` (used as a 32-byte seed) | Authenticating chest entries ([Authenticating chest entries](#authenticating-chest-entries)) |
 
 `GetKey` is deterministic in `(app_id, domain, algorithm)`: every instance of the app, on every restart, gets the same keys, so nothing needs to be persisted or backed up. The KMS releases the app's root key only to a CVM whose boot measurements match the app's on-chain policy (allowed compose hash, allowed OS image), so only code the app owner has registered on chain can ever derive them.
 
@@ -50,7 +51,7 @@ The proof has three independent parts:
 
 ## Derivation
 
-All three keys use the dstack **v1** guest API (`POST /v1/GetKey` on `/var/run/dstack.sock`, dstack ≥ 0.6.0), specified in [guest-api-v1.md](https://github.com/Dstack-TEE/dstack/blob/master/docs/guest-api-v1.md#key-derivation):
+All four keys use the dstack **v1** guest API (`POST /v1/GetKey` on `/var/run/dstack.sock`, dstack ≥ 0.6.0), specified in [guest-api-v1.md](https://github.com/Dstack-TEE/dstack/blob/master/docs/guest-api-v1.md#key-derivation):
 
 ```text
 key = HKDF-SHA256(
@@ -85,6 +86,16 @@ identity = GetKey("wulong/identity/v1",    "secp256k1").key
 v1 guarantees the 32 bytes are a valid secp256k1 scalar (it fails rather than folding an out-of-range value), so they are used directly as Ethereum private keys (`new ethers.Wallet(hex)`). Do not use the SDK's `toViemAccountSecure`: it is a v0-only adapter.
 
 The identity key is kept separate from the relayer so that the key that holds funds never signs statements about Wulong, and the key that signs statements never holds funds.
+
+### Chest MAC key
+
+```text
+k       = GetKey("wulong/chest-mac/v1", "ed25519").key            # 32 bytes
+mac_key = HKDF-SHA256(ikm = k, salt = "wulong",
+                      info = u32be(19) || "wulong-chest-mac-v1", L = 32)
+```
+
+`KeyDerivationService.macChestEntry` computes HMAC-SHA256 under it; the key itself never leaves the service.
 
 ## Binding the public keys
 
@@ -176,6 +187,21 @@ The operator controls the disk, so without an anchor they could restore an older
 - **Configuration**: `WULONG_ANCHOR_ADDRESS` and `BASE_RPC_URL`. Both belong in `docker-compose.yml` as literals, not `${...}` substitutions, so the compose hash commits to them: an operator who could unset the anchor, or point the RPC at a node serving an old root, could roll the chest back. The first release boots without an anchor, since the relayer address is only known once the app runs; see [GOVERNANCE.md](./GOVERNANCE.md#anchor).
 - The anchor proves which chest is current, not what it holds: entries stay encrypted, and the hash reveals nothing about them.
 
+### Authenticating chest entries
+
+The anchor stops rollback, but not an edit written while anchoring is off, and the list of addresses that may make the enclave decrypt an entry sits in plaintext next to the ciphertext. Anyone who can write the volume could add their address to it. Each entry is therefore sealed under the [chest MAC key](#chest-mac-key):
+
+```text
+entry = { version: 2, encryptedPayload, publicAddresses, mac }
+mac   = HMAC-SHA256(mac_key, JSON(["wulong-chest-entry", 2, slot, payload.version ?? 1,
+                                   [[publicKey, ciphertext], ...], encryptedData, iv, authTag,
+                                   publicAddresses]))
+```
+
+- The MAC binds the slot, every payload field and the addresses, so an edited list, a swapped payload or an entry moved to another slot fails. It is checked, in constant time, before any decryption, and a failing entry answers `404 Slot not found` like a missing one.
+- Entries written before versioning have no MAC and cannot be accessed. They are not migrated: sealing them would bless whatever list is on disk today. Boot logs how many entries fail authentication; their owners must store them again.
+- `store` keeps only the payload's known fields, and requires the server's ML-KEM key among the recipients and every recipient key to be 1568 bytes.
+
 ## Rotation
 
 Rotation means changing the domain version (`/v1` to `/v2`) and bumping `epoch` in the manifest. The new build derives both generations:
@@ -199,7 +225,7 @@ In production, startup fails if:
 
 A follow-up issue implements this. Expected shape:
 
-- `KeyDerivationService` (`src/keys/`): calls `/v1/GetKey` over the socket (the v1 client is about 30 lines of `http.request` with `socketPath`), derives the three keys once, and exposes only public keys, `decap(ct)` and signing methods. Private keys never leave the service.
+- `KeyDerivationService` (`src/keys/`): calls `/v1/GetKey` over the socket (the v1 client is about 30 lines of `http.request` with `socketPath`), derives the four keys once, and exposes only public keys, `decap(ct)`, signing and MAC methods. Private keys never leave the service.
 - `MlKemEncryptionService` takes the decapsulation capability from it instead of `ConfigService`.
 - `SecretsService`'s KMS and env paths for keys, `ADMIN_MLKEM_*` in compose and docs, and `scripts/generate-admin-keypair.ts` for production are removed.
 - Attestation (`tee-platform.service.ts`) quotes the `report_data` above, and gains `?nonce=`. It uses `/GetQuote` through the same client, so `@phala/dstack-sdk` is no longer a dependency.

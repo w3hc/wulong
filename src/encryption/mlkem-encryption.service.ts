@@ -40,9 +40,10 @@ export interface MultiRecipientEncryptedPayload {
   authTag: string; // Base64 auth tag (16 bytes)
 }
 
-const KEM_CIPHERTEXT_LENGTH = 1568;
+export const MLKEM_PUBLIC_KEY_LENGTH = 1568;
+export const KEM_CIPHERTEXT_LENGTH = 1568;
 const AES_KEY_LENGTH = 32;
-const WRAPPED_KEY_LENGTH = { 1: 32, 2: 40 } as const;
+export const WRAPPED_KEY_LENGTH = { 1: 32, 2: 40 } as const;
 const IV_LENGTH = 12;
 const AUTH_TAG_LENGTH = 16;
 const KEK_INFO = 'w3pk-mlkem-kek-v2';
