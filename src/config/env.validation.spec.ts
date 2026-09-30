@@ -2,6 +2,12 @@ import 'reflect-metadata';
 import { validateEnvironment, EnvironmentVariables } from './env.validation';
 
 describe('Environment Validation', () => {
+  const production = {
+    NODE_ENV: 'production',
+    SIWE_DOMAIN: 'app.example.com',
+    TLS_ALT_NAMES: 'app-3000s.gateway.example.com',
+  };
+
   describe('validateEnvironment', () => {
     it('should validate valid development environment', () => {
       const config = { NODE_ENV: 'development' };
@@ -12,8 +18,7 @@ describe('Environment Validation', () => {
     });
 
     it('should validate valid production environment', () => {
-      const config = { NODE_ENV: 'production' };
-      const result = validateEnvironment(config);
+      const result = validateEnvironment(production);
 
       expect(result.NODE_ENV).toBe('production');
     });
@@ -38,6 +43,41 @@ describe('Environment Validation', () => {
       const result = validateEnvironment(config);
 
       expect(result.NODE_ENV).toBe('development');
+    });
+  });
+
+  describe('required in production', () => {
+    it.each(['SIWE_DOMAIN', 'TLS_ALT_NAMES'])(
+      'should reject a missing %s',
+      (name) => {
+        const config = { ...production, [name]: undefined };
+
+        expect(() => validateEnvironment(config)).toThrow(
+          `${name} must be set in production`,
+        );
+      },
+    );
+
+    it('should reject a list with no entries', () => {
+      const config = { ...production, SIWE_DOMAIN: ' , ' };
+
+      expect(() => validateEnvironment(config)).toThrow(
+        'SIWE_DOMAIN must be set in production',
+      );
+    });
+
+    it('should not require TLS_ALT_NAMES when TLS is opted out', () => {
+      const config = {
+        NODE_ENV: 'production',
+        SIWE_DOMAIN: 'app.example.com',
+        ALLOW_TLS_OUTSIDE_ENCLAVE: 'true',
+      };
+
+      expect(() => validateEnvironment(config)).not.toThrow();
+    });
+
+    it('should not require them outside production', () => {
+      expect(() => validateEnvironment({ NODE_ENV: 'test' })).not.toThrow();
     });
   });
 
