@@ -112,6 +112,7 @@ describe('Chest Endpoints (e2e)', () => {
         getIdentitySignatureChain: () => [new Uint8Array([0xaa])],
         getRelayerAddress: () => '0x' + '55'.repeat(20),
         getRelayerSignatureChain: () => [new Uint8Array([0xbb])],
+        getRelayerPublicKey: () => new Uint8Array(65).fill(0x04),
       })
       .overrideProvider(TeeTlsService)
       .useValue({

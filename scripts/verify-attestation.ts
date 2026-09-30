@@ -7,15 +7,16 @@
  *
  * Usage:
  *   pnpm tsx scripts/verify-attestation.ts <attestation-url> [--app <DstackApp>]
- *     [--rpc <url>] [--from-block <n>] [--min-delay <seconds>]
+ *     [--kms <DstackKms>] [--anchor <WulongAnchor>] [--rpc <url>]
+ *     [--from-block <n>] [--min-delay <seconds>]
  *   pnpm tsx scripts/verify-attestation.ts https://your-wulong.phala.network/chest/attestation
  *
  * Or with local JSON file:
  *   pnpm tsx scripts/verify-attestation.ts attestation.json
  *
  * What it verifies:
- *   0. Key binding: report_data commits to the returned ML-KEM and identity
- *      keys, to the TLS certificate and to a fresh nonce, the quote carries
+ *   0. Key binding: report_data commits to the returned ML-KEM, relayer and
+ *      identity keys, to the TLS certificate and to a fresh nonce, the quote carries
  *      that report_data, the key manifest is signed by the identity key, and
  *      the TLS session was terminated by that certificate, inside the enclave
  *      (docs/KEY_DERIVATION.md)
@@ -28,12 +29,14 @@
  *      behind a timelock owns it, requireTcbUpToDate is set, the running
  *      compose hash is allowed, and every compose hash ever allowed is listed
  *      (docs/GOVERNANCE.md)
+ *   7. With --app and --kms: the identity and relayer GetKey signature chains
+ *      lead to that DstackKms's root key, read on chain, for that app
+ *   8. With --app and --anchor: the WulongAnchor trusts this relayer
  *
  * What it does NOT verify (requires Intel DCAP):
  *   - Full cryptographic signature verification
  *   - TCB (Trusted Computing Base) level checks
  *   - Certificate revocation status
- *   - The GetKey signature chain up to the on-chain KMS root
  *   - That RTMR3 is the one replayed from the published compose file
  *     (docs/TEE_SETUP.md#measurements)
  *
@@ -45,7 +48,7 @@ import * as crypto from 'crypto';
 import * as http from 'http';
 import * as https from 'https';
 import { TLSSocket } from 'tls';
-import { JsonRpcProvider, getAddress } from 'ethers';
+import { Interface, JsonRpcProvider, computeAddress, getAddress } from 'ethers';
 import {
   KeyBindingEvidence,
   verifyKeyBinding,
@@ -57,15 +60,28 @@ import {
   composeHashFromEventLog,
   readAppGovernance,
 } from '../src/attestation/app-governance';
+import {
+  readKmsRootPublicKey,
+  verifyKeyChain,
+} from '../src/attestation/key-chain';
+import {
+  IDENTITY_DOMAIN,
+  RELAYER_DOMAIN,
+} from '../src/keys/key-derivation.service';
 
 interface GovernanceOptions {
   app: string;
   rpc: string;
   fromBlock?: number;
   minDelay: bigint;
+  kms?: string;
+  anchor?: string;
 }
 
 interface AttestationReport extends Partial<KeyBindingEvidence> {
+  relayerPublicKey?: string;
+  identitySignatureChain?: string[];
+  relayerSignatureChain?: string[];
   platform: 'intel-tdx' | 'none';
   report: string;
   measurements: TdxMeasurements | null;
@@ -391,6 +407,96 @@ async function verifyGovernance(
 /**
  * Main verification function
  */
+/**
+ * Checks the identity and relayer keys are this app's KMS-issued keys, and
+ * that the chest anchor trusts this relayer. The app id is the one
+ * verifyGovernance bound to --app. Exits on failure.
+ */
+async function verifyRelayer(
+  options: GovernanceOptions,
+  attestation: AttestationReport,
+) {
+  const provider = new JsonRpcProvider(options.rpc);
+  const relayerAddress = attestation.relayerAddress!;
+
+  log(`\n⛓️  Key Chain Check:`, 'blue');
+  if (!options.kms) {
+    warning('Skipped: pass --kms <DstackKms address> to check the key chains');
+  } else {
+    const kmsRoot = await readKmsRootPublicKey(provider, options.kms);
+    const relayerPublicKey = attestation.relayerPublicKey;
+    if (
+      !relayerPublicKey ||
+      computeAddress(relayerPublicKey) !== getAddress(relayerAddress)
+    ) {
+      error('relayerPublicKey is missing or is not the relayer address');
+      process.exit(1);
+    }
+    const keys = [
+      {
+        name: 'identity',
+        domain: IDENTITY_DOMAIN,
+        publicKey: attestation.identityPublicKey!,
+        chain: attestation.identitySignatureChain,
+      },
+      {
+        name: 'relayer',
+        domain: RELAYER_DOMAIN,
+        publicKey: relayerPublicKey,
+        chain: attestation.relayerSignatureChain,
+      },
+    ];
+    for (const key of keys) {
+      const failures = verifyKeyChain({
+        publicKey: Buffer.from(key.publicKey.replace(/^0x/, ''), 'hex'),
+        domain: key.domain,
+        algorithm: 'secp256k1',
+        signatureChain: (key.chain ?? []).map((link) =>
+          Buffer.from(link.replace(/^0x/, ''), 'hex'),
+        ),
+        appId: options.app,
+        kmsRootPublicKey: kmsRoot,
+      });
+      if (failures.length > 0) {
+        failures.forEach((failure) => error(`${key.name}: ${failure}`));
+        error(`The ${key.name} key is not this app's KMS-issued key`);
+        process.exit(1);
+      }
+      success(
+        `The ${key.name} key chain leads to the KMS root of ${options.kms}`,
+      );
+    }
+  }
+
+  log(`\n⚓ Anchor Check:`, 'blue');
+  if (!options.anchor) {
+    warning('Skipped: pass --anchor <WulongAnchor address> to check it');
+    return;
+  }
+  const anchor = new Interface([
+    'function relayer() view returns (address)',
+    'function seq() view returns (uint64)',
+  ]);
+  const read = async (fn: 'relayer' | 'seq') =>
+    anchor.decodeFunctionResult(
+      fn,
+      await provider.call({
+        to: options.anchor,
+        data: anchor.encodeFunctionData(fn),
+      }),
+    )[0] as unknown;
+  const trusted = getAddress(String(await read('relayer')));
+  if (trusted !== getAddress(relayerAddress)) {
+    error(
+      `WulongAnchor ${options.anchor} trusts relayer ${trusted}, not ${relayerAddress}`,
+    );
+    process.exit(1);
+  }
+  success(
+    `WulongAnchor trusts this relayer, chest anchored ${String(await read('seq'))} times`,
+  );
+}
+
 async function verifyAttestation(
   source: string,
   governanceOptions?: GovernanceOptions,
@@ -458,7 +564,9 @@ async function verifyAttestation(
       error('DO NOT encrypt to this mlkemPublicKey.');
       process.exit(1);
     }
-    success('report_data commits to the ML-KEM and identity keys');
+    success(
+      `report_data commits to the ML-KEM, relayer (${relayerAddress}) and identity keys`,
+    );
     if (servedCertificate) {
       success(
         'TLS terminates in the enclave: the session certificate is the bound one',
@@ -556,6 +664,7 @@ async function verifyAttestation(
         keyManifest.manifest.appId,
         attestation.eventLog,
       );
+      await verifyRelayer(governanceOptions, attestation);
     } else {
       log(`\n🏛️  Governance Check:`, 'blue');
       warning(
@@ -575,6 +684,12 @@ async function verifyAttestation(
     success('Timestamp: Fresh ✓');
     if (governanceOptions) {
       success('Governance: Timelocked ✓');
+    }
+    if (governanceOptions?.kms) {
+      success('Key chains: Issued by the KMS root ✓');
+    }
+    if (governanceOptions?.anchor) {
+      success('Anchor: Trusts this relayer ✓');
     }
 
     log(`\n⚠️  Important Notes:`, 'yellow');
@@ -759,6 +874,8 @@ function flag(name: string): string | undefined {
 }
 
 const app = flag('--app');
+const kms = flag('--kms');
+const anchorAddress = flag('--anchor');
 const rpc =
   flag('--rpc') ?? process.env.BASE_RPC_URL ?? 'https://mainnet.base.org';
 const fromBlock = flag('--from-block');
@@ -766,7 +883,7 @@ const minDelay = flag('--min-delay');
 
 if (args.length === 0) {
   console.log(
-    'Usage: pnpm tsx scripts/verify-attestation.ts <url-or-file> [--app <DstackApp>] [--rpc <url>] [--from-block <n>] [--min-delay <seconds>]',
+    'Usage: pnpm tsx scripts/verify-attestation.ts <url-or-file> [--app <DstackApp>] [--kms <DstackKms>] [--anchor <WulongAnchor>] [--rpc <url>] [--from-block <n>] [--min-delay <seconds>]',
   );
   console.log('');
   console.log('Examples:');
@@ -789,6 +906,8 @@ verifyAttestation(
         rpc,
         fromBlock: fromBlock ? Number(fromBlock) : undefined,
         minDelay: minDelay ? BigInt(minDelay) : DEFAULT_MIN_DELAY_SECONDS,
+        kms,
+        anchor: anchorAddress,
       }
     : undefined,
 );

@@ -70,6 +70,13 @@ export class AttestationResponseDto {
 
   @ApiProperty({
     description:
+      'Uncompressed secp256k1 relayer public key (hex), of relayerAddress, to check relayerSignatureChain',
+    example: '0x04c5d6e7...',
+  })
+  relayerPublicKey: string;
+
+  @ApiProperty({
+    description:
       'Leaf TLS certificate served from inside the enclave (base64 DER), committed to by reportData. ' +
       'Clients check it matches the certificate of their TLS session. Absent when TLS terminates outside the enclave.',
     required: false,

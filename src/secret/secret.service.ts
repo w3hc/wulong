@@ -257,11 +257,13 @@ export class SecretService implements OnModuleInit {
     const mlkemPublicKey = this.keys.getMlKemPublicKey();
     const identityPublicKey = this.keys.getIdentityPublicKey();
     const relayerAddress = this.keys.getRelayerAddress();
+    const relayerPublicKey = this.keys.getRelayerPublicKey();
     const keyManifest = this.keys.getKeyManifest();
     if (
       !mlkemPublicKey ||
       !identityPublicKey ||
       !relayerAddress ||
+      !relayerPublicKey ||
       !keyManifest
     ) {
       throw new ServiceUnavailableException('Encryption keys are unavailable');
@@ -289,6 +291,7 @@ export class SecretService implements OnModuleInit {
       mlkemPublicKey: Buffer.from(mlkemPublicKey).toString('base64'),
       identityPublicKey: `0x${Buffer.from(identityPublicKey).toString('hex')}`,
       relayerAddress,
+      relayerPublicKey: hexlify(relayerPublicKey),
       tlsCertificate: tlsCertificateDer
         ? Buffer.from(tlsCertificateDer).toString('base64')
         : undefined,

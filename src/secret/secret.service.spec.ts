@@ -75,6 +75,7 @@ describe('SecretService', () => {
     getIdentitySignatureChain: jest.fn(),
     getRelayerAddress: jest.fn(),
     getRelayerSignatureChain: jest.fn(),
+    getRelayerPublicKey: jest.fn(),
   };
 
   const mockTeeTlsService = {
@@ -743,6 +744,9 @@ describe('SecretService', () => {
       mockKeyDerivationService.getRelayerAddress.mockReturnValue(
         relayerAddress,
       );
+      mockKeyDerivationService.getRelayerPublicKey.mockReturnValue(
+        new Uint8Array(65).fill(0x04),
+      );
       mockKeyDerivationService.getRelayerSignatureChain.mockReturnValue([
         new Uint8Array([0xdd]),
       ]);
@@ -768,6 +772,7 @@ describe('SecretService', () => {
         mlkemPublicKey: Buffer.from(mlkemPublicKey).toString('base64'),
         identityPublicKey: `0x${Buffer.from(identityPublicKey).toString('hex')}`,
         relayerAddress,
+        relayerPublicKey: '0x' + '04'.repeat(65),
         tlsCertificate: undefined,
         reportData: `0x${expected.toString('hex')}`,
         keyManifest,
@@ -813,6 +818,7 @@ describe('SecretService', () => {
     it.each([
       'getMlKemPublicKey',
       'getRelayerAddress',
+      'getRelayerPublicKey',
       'getKeyManifest',
     ] as const)('refuses to attest when %s returns nothing', async (method) => {
       mockKeyDerivationService[method].mockReturnValue(null);
