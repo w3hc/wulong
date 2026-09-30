@@ -22,6 +22,7 @@
     "test:mlkem": "ts-node scripts/test-mlkem-flow.ts",
     "test:store-access": "ts-node scripts/test-store-and-access.ts",
     "verify:attestation": "ts-node scripts/verify-attestation.ts",
+    "governance:propose-release": "ts-node scripts/governance/propose-release.ts",
     "dance": "pnpm format && pnpm lint:fix && pnpm test && pnpm test:e2e && pnpm build && pnpm outdated || true"
   },
   "dependencies": {
