@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- `docker-compose.yml` pins the v0.3.0 image, `ghcr.io/w3hc/wulong@sha256:aad85100…` ([#67](https://github.com/w3hc/wulong/issues/67)).
+
 ## [0.3.0] - 2026-09-30
 
 ### Added
