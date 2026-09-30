@@ -330,6 +330,44 @@ export class SecretService implements OnModuleInit {
   }
 
   /**
+   * Deletes a secret stored by the caller and frees their quota. An entry
+   * stored before owners were recorded can be deleted by any of its
+   * addresses.
+   * @param slot The slot identifier
+   * @param callerAddress The address of the caller (from SIWE authentication)
+   * @throws NotFoundException if slot is malformed, doesn't exist, fails
+   * authentication or the caller cannot delete it
+   * @throws BadRequestException if the caller address is invalid
+   */
+  async remove(slot: string, callerAddress: string): Promise<void> {
+    if (typeof slot !== 'string' || !SLOT_PATTERN.test(slot)) {
+      throw new NotFoundException('Slot not found');
+    }
+
+    if (!callerAddress || !isAddress(callerAddress)) {
+      throw new BadRequestException('Invalid caller address');
+    }
+
+    const caller = callerAddress.toLowerCase();
+    await this.withWriteLock(async () => {
+      const secretData = await this.getChest();
+      // Answers like access, so callers cannot probe which slots are in use
+      const entry: unknown = Object.hasOwn(secretData, slot)
+        ? secretData[slot]
+        : undefined;
+      if (
+        !this.isAuthentic(slot, entry) ||
+        (entry.owner === undefined
+          ? !entry.publicAddresses.includes(caller)
+          : entry.owner !== caller)
+      ) {
+        throw new NotFoundException('Slot not found');
+      }
+      await this.commit({ [slot]: null });
+    });
+  }
+
+  /**
    * Generates a TEE attestation whose `report_data` commits to Wulong's public
    * keys, to the TLS certificate served from inside the enclave, and to the
    * client's nonce, so a client can check that the returned ML-KEM key is the

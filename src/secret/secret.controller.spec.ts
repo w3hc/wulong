@@ -18,6 +18,7 @@ describe('SecretController', () => {
   const mockSecretService = {
     store: jest.fn(),
     access: jest.fn(),
+    remove: jest.fn(),
     getAttestation: jest.fn(),
   };
 
@@ -213,6 +214,33 @@ describe('SecretController', () => {
     });
   });
 
+  describe('remove', () => {
+    const req = {
+      user: { address: '0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb' },
+    };
+
+    it('should delete the slot as the authenticated caller', async () => {
+      const slot = 'a'.repeat(64);
+      mockSecretService.remove.mockResolvedValue(undefined);
+
+      await expect(controller.remove(slot, req)).resolves.toBeUndefined();
+      expect(mockSecretService.remove).toHaveBeenCalledWith(
+        slot,
+        req.user.address,
+      );
+    });
+
+    it('should propagate NotFoundException from service', async () => {
+      mockSecretService.remove.mockRejectedValue(
+        new NotFoundException('Slot not found'),
+      );
+
+      await expect(controller.remove('a'.repeat(64), req)).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+  });
+
   describe('decorator validation', () => {
     it('should be decorated with correct tags and route', () => {
       // Verify the controller is properly decorated
@@ -220,8 +248,8 @@ describe('SecretController', () => {
       expect(secretService).toBeDefined();
     });
 
-    it('should guard store and access with SiweGuard', () => {
-      for (const name of ['store', 'access']) {
+    it('should guard store, access and remove with SiweGuard', () => {
+      for (const name of ['store', 'access', 'remove']) {
         const handler = Object.getOwnPropertyDescriptor(
           SecretController.prototype,
           name,

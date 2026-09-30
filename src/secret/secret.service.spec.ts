@@ -1077,6 +1077,144 @@ describe('SecretService', () => {
     });
   });
 
+  describe('remove', () => {
+    const owner = '0xbfbaa5a59e3b6c06aff9c975092b8705f804fa1c';
+    const other = '0x70997970c51812dc3a010c7d01b50e0d17dc79c8';
+    const slot = 'a'.repeat(64);
+    const notFound = new NotFoundException('Slot not found');
+    const chestWith = (entries: Record<string, unknown>) => {
+      jest.spyOn(fs, 'existsSync').mockReturnValue(true);
+      jest
+        .spyOn(fs.promises, 'readFile')
+        .mockResolvedValue(JSON.stringify(entries));
+    };
+    const written = () =>
+      JSON.parse(
+        (
+          (fs.promises.writeFile as jest.Mock).mock.calls.at(-1) as [
+            string,
+            string,
+          ]
+        )[1],
+      ) as Record<string, unknown>;
+
+    beforeEach(() => {
+      jest.spyOn(fs.promises, 'writeFile').mockResolvedValue();
+      jest.spyOn(fs.promises, 'rename').mockResolvedValue();
+      (ethers.isAddress as unknown as jest.Mock).mockImplementation(
+        (address: string) => /^0x[0-9a-fA-F]{40}$/.test(address),
+      );
+      mockMlKemEncryptionService.isAvailable.mockReturnValue(true);
+      mockMlKemEncryptionService.decryptMultiRecipient.mockReturnValue('s');
+    });
+
+    it('deletes the slot and writes the chest without it', async () => {
+      const kept = 'b'.repeat(64);
+      chestWith({
+        [slot]: seal(slot, createMockEncryptedPayload(), [owner]),
+        [kept]: seal(kept, createMockEncryptedPayload(), [owner]),
+      });
+
+      await service.remove(slot, owner);
+
+      expect(Object.keys(written())).toEqual([kept]);
+      expect(fs.promises.rename).toHaveBeenCalledWith(
+        `${testChestPath}.tmp`,
+        testChestPath,
+      );
+    });
+
+    it('answers access after deletion like a missing slot', async () => {
+      const stored = await service.store(
+        createMockEncryptedPayload(),
+        [owner],
+        owner,
+      );
+      await expect(service.access(stored, owner)).resolves.toBe('s');
+
+      await service.remove(stored, owner);
+
+      await expect(service.access(stored, owner)).rejects.toThrow(notFound);
+      await expect(service.remove(stored, owner)).rejects.toThrow(notFound);
+    });
+
+    it('frees the quota of the owner', async () => {
+      const payload = createMockEncryptedPayload();
+      process.env.CHEST_ADDRESS_QUOTA_BYTES = String(
+        Buffer.byteLength(JSON.stringify(seal(slot, payload, [owner]))),
+      );
+      const quotaService = new SecretService(
+        mockTeePlatformService as unknown as TeePlatformService,
+        mockMlKemEncryptionService as unknown as MlKemEncryptionService,
+        mockKeyDerivationService as unknown as KeyDerivationService,
+        mockTeeTlsService as unknown as TeeTlsService,
+        mockRelayerService as unknown as RelayerService,
+      );
+      delete process.env.CHEST_ADDRESS_QUOTA_BYTES;
+
+      const stored = await quotaService.store(payload, [owner], owner);
+      await expect(
+        quotaService.store(payload, [owner], owner),
+      ).rejects.toMatchObject({ status: HttpStatus.PAYLOAD_TOO_LARGE });
+
+      await quotaService.remove(stored, owner);
+
+      await expect(
+        quotaService.store(payload, [owner], owner),
+      ).resolves.toEqual(expect.any(String));
+    });
+
+    it('refuses other listed addresses like a missing slot', async () => {
+      chestWith({
+        [slot]: seal(slot, createMockEncryptedPayload(), [owner, other]),
+      });
+
+      await expect(service.remove(slot, other)).rejects.toThrow(notFound);
+      expect(fs.promises.writeFile).not.toHaveBeenCalled();
+      await expect(service.access(slot, other)).resolves.toBe('s');
+    });
+
+    it('lets any listed address delete an entry without an owner', async () => {
+      chestWith({
+        [slot]: sealLegacy(slot, createMockEncryptedPayload(), [owner, other]),
+      });
+
+      await service.remove(slot, other.toUpperCase().replace('0X', '0x'));
+
+      expect(written()).toEqual({});
+    });
+
+    it('refuses an entry that fails authentication', async () => {
+      const entry = seal(slot, createMockEncryptedPayload(), [other]);
+      entry.owner = owner;
+      chestWith({ [slot]: entry });
+
+      await expect(service.remove(slot, owner)).rejects.toThrow(notFound);
+      expect(fs.promises.writeFile).not.toHaveBeenCalled();
+    });
+
+    it('refuses a malformed slot or caller', async () => {
+      await expect(service.remove('__proto__', owner)).rejects.toThrow(
+        notFound,
+      );
+      await expect(service.remove(slot, 'nope')).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('keeps the slot when the write fails', async () => {
+      chestWith({ [slot]: seal(slot, createMockEncryptedPayload(), [owner]) });
+      jest
+        .spyOn(fs.promises, 'writeFile')
+        .mockRejectedValueOnce(new Error('Write error'));
+
+      await expect(service.remove(slot, owner)).rejects.toThrow(
+        'Failed to save secret',
+      );
+      await expect(service.access(slot, owner)).resolves.toBe('s');
+    });
+  });
+
   describe('edge cases', () => {
     beforeEach(() => {
       // Mock isAddress for all edge case tests
