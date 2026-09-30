@@ -88,6 +88,8 @@ describe('SecretService', () => {
     anchorChest: jest.fn<Promise<string>, [string, bigint]>(),
   };
 
+  const serverPublicKey = Buffer.alloc(1568, 'a').toString('base64');
+
   // Helper to create a valid encrypted payload
   const createMockEncryptedPayload = (publicKey?: string) => {
     // Create 1600 bytes of data (1568 KEM + 32 encrypted AES key)
@@ -100,7 +102,7 @@ describe('SecretService', () => {
     return {
       recipients: [
         {
-          publicKey: publicKey || Buffer.alloc(1568, 'a').toString('base64'),
+          publicKey: publicKey || serverPublicKey,
           ciphertext: ciphertextBytes.toString('base64'),
         },
       ],
@@ -141,6 +143,7 @@ describe('SecretService', () => {
 
     // Reset mocks
     jest.clearAllMocks();
+    mockMlKemEncryptionService.getPublicKey.mockReturnValue(serverPublicKey);
   });
 
   afterEach(() => {
@@ -440,6 +443,85 @@ describe('SecretService', () => {
           '0xbfbaa5a59e3b6c06aff9c975092b8705f804fa1c',
         ),
       ).rejects.toThrow('Invalid ML-KEM ciphertext size: expected 1600 bytes');
+    });
+
+    it('should accept a v2 payload with 1608-byte ciphertexts', async () => {
+      const payload = {
+        ...createMockEncryptedPayload(),
+        version: 2 as const,
+      };
+      payload.recipients[0].ciphertext = Buffer.alloc(1608).toString('base64');
+
+      await expect(
+        service.store(
+          payload,
+          ['0xbfbaa5a59e3b6c06aff9c975092b8705f804fa1c'],
+          '0xbfbaa5a59e3b6c06aff9c975092b8705f804fa1c',
+        ),
+      ).resolves.toMatch(/^[0-9a-f]{64}$/);
+    });
+
+    it('should reject a v2 payload with v1-sized ciphertexts', async () => {
+      const payload = {
+        ...createMockEncryptedPayload(),
+        version: 2 as const,
+      };
+
+      await expect(
+        service.store(
+          payload,
+          ['0xbfbaa5a59e3b6c06aff9c975092b8705f804fa1c'],
+          '0xbfbaa5a59e3b6c06aff9c975092b8705f804fa1c',
+        ),
+      ).rejects.toThrow('Invalid ML-KEM ciphertext size: expected 1608 bytes');
+    });
+
+    it('should reject an unsupported payload version', async () => {
+      const payload = { ...createMockEncryptedPayload(), version: 3 };
+
+      await expect(
+        service.store(
+          payload as unknown as ReturnType<typeof createMockEncryptedPayload>,
+          ['0xbfbaa5a59e3b6c06aff9c975092b8705f804fa1c'],
+          '0xbfbaa5a59e3b6c06aff9c975092b8705f804fa1c',
+        ),
+      ).rejects.toThrow('Unsupported encrypted payload version');
+    });
+
+    it('should reject a recipient public key that is not 1568 bytes', async () => {
+      const payload = createMockEncryptedPayload();
+      payload.recipients.push({
+        publicKey: Buffer.alloc(32).toString('base64'),
+        ciphertext: payload.recipients[0].ciphertext,
+      });
+
+      await expect(
+        service.store(
+          payload,
+          ['0xbfbaa5a59e3b6c06aff9c975092b8705f804fa1c'],
+          '0xbfbaa5a59e3b6c06aff9c975092b8705f804fa1c',
+        ),
+      ).rejects.toThrow('Invalid ML-KEM public key size: expected 1568 bytes');
+      expect(fs.promises.writeFile).not.toHaveBeenCalled();
+    });
+
+    it('should reject a payload the server is not a recipient of', async () => {
+      const payload = createMockEncryptedPayload(
+        Buffer.alloc(1568, 'b').toString('base64'),
+      );
+
+      await expect(
+        service.store(
+          payload,
+          ['0xbfbaa5a59e3b6c06aff9c975092b8705f804fa1c'],
+          '0xbfbaa5a59e3b6c06aff9c975092b8705f804fa1c',
+        ),
+      ).rejects.toThrow(
+        new BadRequestException(
+          'Invalid encrypted payload: the server must be one of the recipients',
+        ),
+      );
+      expect(fs.promises.writeFile).not.toHaveBeenCalled();
     });
 
     it('should throw ForbiddenException if caller is not among publicAddresses', async () => {

@@ -20,8 +20,11 @@ import { RelayerService } from '../relayer/relayer.service';
 import { TeeTlsService } from '../tls/tee-tls.service';
 import { AttestationResponseDto } from './dto/attestation-response.dto';
 import {
+  KEM_CIPHERTEXT_LENGTH,
+  MLKEM_PUBLIC_KEY_LENGTH,
   MlKemEncryptionService,
   MultiRecipientEncryptedPayload,
+  WRAPPED_KEY_LENGTH,
 } from '../encryption/mlkem-encryption.service';
 
 interface SecretEntry {
@@ -136,14 +139,39 @@ export class SecretService implements OnModuleInit {
       );
     }
 
-    // Validate at least one recipient ciphertext size
+    const version = encryptedPayload.version ?? 1;
+    if (version !== 1 && version !== 2) {
+      throw new BadRequestException('Unsupported encrypted payload version');
+    }
+
+    const ciphertextLength =
+      KEM_CIPHERTEXT_LENGTH + WRAPPED_KEY_LENGTH[version];
     for (const recipient of encryptedPayload.recipients) {
-      const ciphertextBytes = Buffer.from(recipient.ciphertext, 'base64');
-      if (ciphertextBytes.length !== 1568 + 32) {
+      if (
+        Buffer.from(recipient.publicKey, 'base64').length !==
+        MLKEM_PUBLIC_KEY_LENGTH
+      ) {
         throw new BadRequestException(
-          `Invalid ML-KEM ciphertext size: expected ${1568 + 32} bytes`,
+          `Invalid ML-KEM public key size: expected ${MLKEM_PUBLIC_KEY_LENGTH} bytes`,
         );
       }
+      if (
+        Buffer.from(recipient.ciphertext, 'base64').length !== ciphertextLength
+      ) {
+        throw new BadRequestException(
+          `Invalid ML-KEM ciphertext size: expected ${ciphertextLength} bytes`,
+        );
+      }
+    }
+
+    // A chest the server cannot decrypt would only ever answer 400 on access
+    const serverPublicKey = this.mlkemEncryptionService.getPublicKey();
+    if (
+      !encryptedPayload.recipients.some((r) => r.publicKey === serverPublicKey)
+    ) {
+      throw new BadRequestException(
+        'Invalid encrypted payload: the server must be one of the recipients',
+      );
     }
 
     // Validate addresses

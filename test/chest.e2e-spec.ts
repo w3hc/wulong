@@ -12,20 +12,18 @@ import { KeyDerivationService } from '../src/keys/key-derivation.service';
 import { buildReportData } from '../src/attestation/report-data';
 import { TeeTlsService } from '../src/tls/tee-tls.service';
 
+const serverPublicKey = Buffer.alloc(1568).toString('base64');
+
 // Helper to create a valid encrypted payload for testing
 const createMockEncryptedPayload = () => {
   // Create 1600 bytes (1568 KEM + 32 AES key) as base64
   const ciphertextBytes = Buffer.alloc(1600);
   const ciphertextBase64 = ciphertextBytes.toString('base64');
 
-  // Create 1568 bytes public key as base64
-  const publicKeyBytes = Buffer.alloc(1568);
-  const publicKeyBase64 = publicKeyBytes.toString('base64');
-
   return {
     recipients: [
       {
-        publicKey: publicKeyBase64,
+        publicKey: serverPublicKey,
         ciphertext: ciphertextBase64,
       },
     ],
@@ -91,7 +89,7 @@ describe('Chest Endpoints (e2e)', () => {
       .overrideProvider(MlKemEncryptionService)
       .useValue({
         isAvailable: () => true,
-        getPublicKey: () => 'mock-public-key',
+        getPublicKey: () => serverPublicKey,
         decryptMultiRecipient: jest
           .fn()
           .mockResolvedValue('decrypted-test-secret'),
