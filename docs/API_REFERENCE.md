@@ -25,6 +25,7 @@ https://localhost:3000
     - [GET /health](#get-health)
     - [GET /health/ready](#get-healthready)
     - [GET /health/live](#get-healthlive)
+    - [GET /health/relayer](#get-healthrelayer)
   - [Error Responses](#error-responses)
   - [Rate Limiting](#rate-limiting)
   - [Swagger/OpenAPI Documentation](#swaggeropenapi-documentation)
@@ -64,6 +65,8 @@ Get a TEE attestation that commits to the server's public keys, so clients can c
   timestamp: string;         // ISO 8601 timestamp when attestation was generated
   mlkemPublicKey: string;    // ML-KEM-1024 public key (base64)
   identityPublicKey: string; // Uncompressed secp256k1 identity public key (hex)
+  relayerAddress: string;    // Address of the relayer wallet
+  relayerPublicKey: string;  // Uncompressed secp256k1 relayer public key (hex)
   tlsCertificate?: string;   // Leaf TLS certificate served from inside the enclave (base64 DER)
   reportData: string;        // The 64 bytes of report_data in the quote (hex)
   keyManifest: {             // EIP-712 manifest signed by the identity key
@@ -71,10 +74,11 @@ Get a TEE attestation that commits to the server's public keys, so clients can c
     signature: string;
   };
   identitySignatureChain: string[]; // dstack GetKey signature chain of the identity key (hex)
+  relayerSignatureChain: string[];  // dstack GetKey signature chain of the relayer key (hex)
 }
 ```
 
-`reportData` is `SHA-256(LP("wulong-report-v1") || LP(ek) || LP(relayer) || LP(identity_pubkey) || LP(SHA-256(tls_cert)))` followed by the nonce, or 32 zero bytes. `tls_cert` is `tlsCertificate`; check it equals the certificate of your TLS session. The relayer term is empty for now, and the TLS term is empty (and `tlsCertificate` absent) only when TLS terminates outside the enclave. See [KEY_DERIVATION.md](KEY_DERIVATION.md#report_data).
+`reportData` is `SHA-256(LP("wulong-report-v1") || LP(ek) || LP(relayer) || LP(identity_pubkey) || LP(SHA-256(tls_cert)))` followed by the nonce, or 32 zero bytes. `tls_cert` is `tlsCertificate`; check it equals the certificate of your TLS session. `relayer` is the 20 bytes of `relayerAddress`. The TLS term is empty (and `tlsCertificate` absent) only when TLS terminates outside the enclave. See [KEY_DERIVATION.md](KEY_DERIVATION.md#report_data).
 
 RTMR3 identifies the app; MRTD and RTMR0–2 identify the dstack OS image. See [TEE_SETUP.md](TEE_SETUP.md#measurements) for how to reproduce them.
 
@@ -101,26 +105,29 @@ curl -k "https://localhost:3000/chest/attestation?nonce=$(openssl rand -hex 32)"
   "timestamp": "2026-09-29T10:30:00.000Z",
   "mlkemPublicKey": "k3VARNFcS4hWl6AfR0DMy...",
   "identityPublicKey": "0x04bd6e22...",
+  "relayerAddress": "0x602cA51341d6d1ff32b2ce8442c5e807A527CA17",
+  "relayerPublicKey": "0x04c5d6e7...",
   "reportData": "0x3f1c...a9e2",
   "keyManifest": {
     "manifest": {
       "appId": "0x1111111111111111111111111111111111111111",
       "mlkemPublicKeyHash": "0xf148afce...",
-      "relayer": "0x0000000000000000000000000000000000000000",
+      "relayer": "0x602cA51341d6d1ff32b2ce8442c5e807A527CA17",
       "epoch": 1
     },
     "signature": "0x5b0e..."
   },
-  "identitySignatureChain": ["0x9c1f...", "0x2d7a..."]
+  "identitySignatureChain": ["0x9c1f...", "0x2d7a..."],
+  "relayerSignatureChain": ["0x41e0...", "0x2d7a..."]
 }
 ```
 
 **Before encrypting to `mlkemPublicKey`**, verify the quote, then check the binding: `pnpm verify:attestation <url>` does both checks below.
 
-1. Recompute `reportData` from `mlkemPublicKey`, `identityPublicKey` and your nonce, and check it equals the `report_data` inside the quote.
-2. Check `keyManifest` is signed by `identityPublicKey` and that `mlkemPublicKeyHash` is `SHA-256(mlkemPublicKey)`.
+1. Recompute `reportData` from `mlkemPublicKey`, `relayerAddress`, `identityPublicKey`, `tlsCertificate` and your nonce, and check it equals the `report_data` inside the quote.
+2. Check `keyManifest` is signed by `identityPublicKey`, that `mlkemPublicKeyHash` is `SHA-256(mlkemPublicKey)` and that `relayer` is `relayerAddress`.
 
-Checking `identitySignatureChain` up to the on-chain KMS root, and the measurements, is covered in [KEY_DERIVATION.md](KEY_DERIVATION.md#verification).
+Checking `identitySignatureChain` and `relayerSignatureChain` up to the on-chain KMS root (`--kms`), and the measurements, is covered in [KEY_DERIVATION.md](KEY_DERIVATION.md#verification).
 
 **See also:** [Client-Side Encryption Guide](CLIENT_ENCRYPTION.md)
 
@@ -476,6 +483,41 @@ curl -k https://localhost:3000/health/live
 }
 ```
 
+
+---
+
+### GET /health/relayer
+
+The relayer wallet, for topping it up. Everything here is public on chain.
+
+**Authentication:** None
+
+**Response:**
+
+```typescript
+{
+  address: string | null;    // Relayer address; null until the keys are derived
+  anchor: string | null;     // WulongAnchor address; null when WULONG_ANCHOR_ADDRESS is unset
+  balanceWei: string | null; // Last balance read, at boot and after each anchor
+  maxBalanceWei: string;     // RELAYER_MAX_BALANCE_WEI: a higher balance is logged
+  anchoring: boolean;        // Whether chest writes are anchored
+}
+```
+
+**Example:**
+
+```bash
+curl -k https://localhost:3000/health/relayer
+
+# Response
+{
+  "address": "0x602cA51341d6d1ff32b2ce8442c5e807A527CA17",
+  "anchor": "0x7777777777777777777777777777777777777777",
+  "balanceWei": "1000000000000000",
+  "maxBalanceWei": "10000000000000000",
+  "anchoring": true
+}
+```
 ---
 
 ## Error Responses

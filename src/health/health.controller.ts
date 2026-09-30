@@ -1,5 +1,6 @@
 import { Controller, Get, ServiceUnavailableException } from '@nestjs/common';
 import { KeyDerivationService } from '../keys/key-derivation.service';
+import { RelayerService } from '../relayer/relayer.service';
 
 /**
  * Health check endpoint for monitoring and load balancers.
@@ -7,7 +8,10 @@ import { KeyDerivationService } from '../keys/key-derivation.service';
  */
 @Controller('health')
 export class HealthController {
-  constructor(private readonly keys: KeyDerivationService) {}
+  constructor(
+    private readonly keys: KeyDerivationService,
+    private readonly relayer: RelayerService,
+  ) {}
 
   /**
    * Basic health check endpoint.
@@ -35,6 +39,19 @@ export class HealthController {
     return {
       status: 'ready',
       timestamp: new Date().toISOString(),
+    };
+  }
+
+  /**
+   * The relayer wallet, for topping it up: its address, the anchor contract
+   * and the last balance read. All public on chain.
+   * @returns Relayer status
+   */
+  @Get('relayer')
+  relayerStatus() {
+    return {
+      ...this.relayer.getStatus(),
+      anchoring: this.relayer.isEnabled(),
     };
   }
 

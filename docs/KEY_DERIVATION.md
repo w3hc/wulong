@@ -1,6 +1,6 @@
 # Enclave-Derived Keys
 
-Design for how Wulong obtains its long-lived private keys so that they exist only inside the attested enclave, and no one, the operator included, can obtain them. Tracks [#31](https://github.com/w3hc/wulong/issues/31). **Status:** ML-KEM and identity key derivation are implemented ([#33](https://github.com/w3hc/wulong/issues/33)), and `GET /chest/attestation` serves the key manifest and the new `report_data` ([#35](https://github.com/w3hc/wulong/issues/35)), and TLS terminates inside the enclave with its leaf certificate bound into `report_data` ([#37](https://github.com/w3hc/wulong/issues/37)); the relayer wallet and on-chain governance are not yet.
+Design for how Wulong obtains its long-lived private keys so that they exist only inside the attested enclave, and no one, the operator included, can obtain them. Tracks [#31](https://github.com/w3hc/wulong/issues/31). **Status:** ML-KEM and identity key derivation are implemented ([#33](https://github.com/w3hc/wulong/issues/33)), and `GET /chest/attestation` serves the key manifest and the new `report_data` ([#35](https://github.com/w3hc/wulong/issues/35)), TLS terminates inside the enclave with its leaf certificate bound into `report_data` ([#37](https://github.com/w3hc/wulong/issues/37)), on-chain governance is in place ([#48](https://github.com/w3hc/wulong/issues/48)), and the relayer wallet anchors the chest on chain ([#49](https://github.com/w3hc/wulong/issues/49)).
 
 ## Table of Contents
 
@@ -25,7 +25,7 @@ Wulong holds three keys, all derived at boot from the [dstack](https://github.co
 | Key | `GetKey` domain | Algorithm | Used for |
 | --- | --- | --- | --- |
 | ML-KEM-1024 decapsulation key | `wulong/mlkem-1024/v1` | `ed25519` (used as a 32-byte seed) | Decrypting the server recipient entry of stored secrets |
-| Relayer wallet | `wulong/relayer/evm/v1` | `secp256k1` | Sending transactions for future on-chain actions |
+| Relayer wallet | `wulong/relayer/evm/v1` | `secp256k1` | Anchoring the chest on chain ([The relayer wallet](#the-relayer-wallet)) |
 | Identity key | `wulong/identity/v1` | `secp256k1` | Signing the key manifest that binds the other public keys |
 
 `GetKey` is deterministic in `(app_id, domain, algorithm)`: every instance of the app, on every restart, gets the same keys, so nothing needs to be persisted or backed up. The KMS releases the app's root key only to a CVM whose boot measurements match the app's on-chain policy (allowed compose hash, allowed OS image), so only code the app owner has registered on chain can ever derive them.
@@ -102,7 +102,7 @@ struct KeyManifest {
 }
 ```
 
-`GET /chest/attestation` returns the manifest, its signature, the full ML-KEM public key, and the `GetKey` signature chains of the identity and relayer keys.
+`GET /chest/attestation` returns the manifest, its signature, the full ML-KEM public key, the relayer address and public key, and the `GetKey` signature chains of the identity and relayer keys.
 
 ### `report_data`
 
@@ -122,7 +122,7 @@ A client, before encrypting to Wulong, or an auditor, at any time:
 
 1. **Quote.** Verify the attestation from `GET /chest/attestation?nonce=<32 bytes>` with dstack's verifier (or `@phala/dcap-qvl`): valid Intel signature, TCB up to date, `report_data` equal to the recomputation above with the client's nonce.
 2. **Code.** Replay the event log into RTMR3 and read the `compose_hash`, `app_id` and `os_image_hash`. Check that `compose_hash` belongs to a published Wulong release whose image digest is reproducible from source, and that `app_id` is Wulong's known `DstackApp` address. Never trust an `app_id` read from the CVM's own `Info`.
-3. **Chain.** For the identity and relayer keys, verify each `GetKey` signature chain per the [v1 spec](https://github.com/Dstack-TEE/dstack/blob/master/docs/guest-api-v1.md#verifying-a-chain), anchored on `DstackKms.kmsInfo().k256Pubkey` read from the chain, not from Wulong.
+3. **Chain.** For the identity and relayer keys, verify each `GetKey` signature chain per the [v1 spec](https://github.com/Dstack-TEE/dstack/blob/master/docs/guest-api-v1.md#verifying-a-chain), anchored on `DstackKms.kmsInfo().k256Pubkey` read from the chain, not from Wulong. `pnpm verify:attestation --app <DstackApp> --kms <DstackKms>` does it.
 4. **Manifest.** Recover the manifest signer and check that it is the identity key from step 3, that `appId` matches, and that `mlkemPublicKeyHash` is `SHA-256(ek)`.
 5. **Governance.** Read the `DstackApp` contract: owner, allowed compose hashes (current and past `ComposeHashAdded` events), upgrade status. See [Upgrade governance](#upgrade-governance); `pnpm verify:attestation --app <DstackApp>` does it.
 
@@ -160,19 +160,28 @@ The `DstackApp` owner can call `addComposeHash`, so the owner is the real key ho
 
 ## The relayer wallet
 
-The relayer key only makes sense for actions the code itself decides. Rules for when those actions are implemented:
+The relayer key only makes sense for actions the code itself decides. Its one action today is anchoring the chest.
 
-- No endpoint signs arbitrary payloads or transactions. Each on-chain action is a specific code path whose inputs are validated in the enclave.
-- The wallet holds only the gas it needs. Treat its balance as spendable by a future malicious registered build, and cap it (top up from an external treasury, or pay through an [ERC-4337](https://eips.ethereum.org/EIPS/eip-4337) paymaster).
-- Contracts that trust the relayer should check its address with the on-chain chain verification above, or through an allowlist updated by the same timelock, so a rotated relayer can be replaced.
-- Nonces are managed by a single instance, or by a per-instance domain (`wulong/relayer/evm/v1/<n>`) if several instances must send concurrently.
+- No endpoint signs arbitrary payloads or transactions. `RelayerService` ([`src/relayer/`](../src/relayer/relayer.service.ts)) builds each transaction itself, and `KeyDerivationService.signRelayerTransaction` is reached only from there.
+- The wallet holds only the gas it needs. Treat its balance as spendable by a future malicious registered build, and top it up from outside in small amounts. A balance above `RELAYER_MAX_BALANCE_WEI` (default 0.01 ETH) is logged, and `GET /health/relayer` shows the address and last balance read.
+- Contracts that trust the relayer check its address through an allowlist updated by the same timelock, so a rotated relayer can be replaced: `WulongAnchor.setRelayer` is timelocked.
+- Nonces are managed by a single instance, which sends one transaction at a time.
+
+### Anchoring the chest
+
+The operator controls the disk, so without an anchor they could restore an older `chest.json`, for example one where a revoked address still has access. [`WulongAnchor`](../contracts/src/WulongAnchor.sol) holds the latest `SHA-256(chest.json)` and a sequence number that only moves forward, and only the relayer can write it.
+
+- **Write**: the new chest is written to `chest.json.pending`, its hash is anchored and the transaction waits for inclusion, and only then is it renamed over `chest.json`. A store whose anchoring fails answers `503` and leaves the chest unchanged. Writes are serialized, so a store takes about one Base block.
+- **Boot**: the chest must match the anchored hash, or the pending file must, if a crash hit between inclusion and rename; it is then promoted. Anything else aborts startup: the chest was rolled back or altered outside the enclave. A chest that was never anchored (sequence 0) is anchored as it is on first boot.
+- **Configuration**: `WULONG_ANCHOR_ADDRESS` and `BASE_RPC_URL`. Both belong in `docker-compose.yml` as literals, not `${...}` substitutions, so the compose hash commits to them: an operator who could unset the anchor, or point the RPC at a node serving an old root, could roll the chest back. The first release boots without an anchor, since the relayer address is only known once the app runs; see [GOVERNANCE.md](./GOVERNANCE.md#anchor).
+- The anchor proves which chest is current, not what it holds: entries stay encrypted, and the hash reveals nothing about them.
 
 ## Rotation
 
 Rotation means changing the domain version (`/v1` to `/v2`) and bumping `epoch` in the manifest. The new build derives both generations:
 
 - **ML-KEM**: the enclave decapsulates each stored server entry with the old key and re-encapsulates the AES key to the new one, without the plaintext data ever leaving it. Client recipient entries are unaffected. The old derivation is dropped in the next release.
-- **Relayer**: the new build sweeps the old wallet's balance to the new address and updates the allowlists.
+- **Relayer**: the new build sweeps the old wallet's balance to the new address, and the timelock calls `WulongAnchor.setRelayer` with it.
 
 Rotation limits exposure to a future leak but gives no forward secrecy against a KMS root compromise: the root can derive every past generation.
 

@@ -25,7 +25,8 @@ Adding a compose hash always takes the full delay. Removing one can be immediate
 The Foundry project in [`contracts/`](../contracts) holds:
 
 - [`WulongAppOwner.sol`](../contracts/src/WulongAppOwner.sol): the `DstackApp` owner. `execute(bytes)` forwards any call from the timelock, `removeComposeHash` is the guardian's emergency path, `setGuardian` is timelocked, and `acceptOwnership` completes the app's two-step handover.
-- [`Deploy.s.sol`](../contracts/script/Deploy.s.sol): deploys an OpenZeppelin `TimelockController` and the `WulongAppOwner`. The Safe is the only proposer, executor and canceller, and the timelock administers itself, so changing its roles or delay is also delayed.
+- [`WulongAnchor.sol`](../contracts/src/WulongAnchor.sol): the chest anchor the relayer writes to ([KEY_DERIVATION.md](./KEY_DERIVATION.md#anchoring-the-chest)). `anchor(root, seq)` is for the relayer only, with `seq` strictly increasing; `setRelayer` is timelocked.
+- [`Deploy.s.sol`](../contracts/script/Deploy.s.sol): deploys an OpenZeppelin `TimelockController`, the `WulongAppOwner` and the `WulongAnchor`. The Safe is the only proposer, executor and canceller, and the timelock administers itself, so changing its roles or delay is also delayed.
 
 OpenZeppelin and forge-std come from `node_modules`, pinned by `pnpm-lock.yaml`:
 
@@ -42,13 +43,22 @@ On Base, against the on-chain `DstackKms`, once the `DstackApp` exists and runs 
 1. **Deploy** the timelock and owner:
    ```bash
    cd contracts
-   DSTACK_APP=0x... SAFE=0x... forge script script/Deploy.s.sol \
+   DSTACK_APP=0x... SAFE=0x... RELAYER=0x... forge script script/Deploy.s.sol \
      --rpc-url $BASE_RPC_URL --broadcast --verify
    ```
-   `GUARDIAN` defaults to the Safe; `TIMELOCK_DELAY` to 604800 seconds. Verify both contracts on Basescan, so anyone can check `WulongAppOwner` is this source.
+   `RELAYER` is `relayerAddress` from `GET /chest/attestation`, once `pnpm verify:attestation --kms <DstackKms>` accepts its chain. `GUARDIAN` defaults to the Safe; `TIMELOCK_DELAY` to 604800 seconds. Verify the contracts on Basescan, so anyone can check they are this source.
 2. **Tighten** the app while the current owner still can: `setRequireTcbUpToDate(true)`, and remove every compose hash but the running one.
 3. **Hand over**: the current owner calls `transferOwnership(<WulongAppOwner>)`, then anyone calls `WulongAppOwner.acceptOwnership()`. From then on, only the timelock can add builds.
 4. **Check** with `pnpm verify:attestation <url> --app <DstackApp> --from-block <app creation block>`.
+5. **Anchor**: see [below](#anchor).
+
+### Anchor
+
+The first release runs without `WULONG_ANCHOR_ADDRESS`, so its chest is not protected against rollback yet: the relayer address it serves is what the anchor is deployed for.
+
+1. Fund the relayer with a small amount of ETH on Base, below `RELAYER_MAX_BALANCE_WEI`.
+2. Release a build whose `docker-compose.yml` sets `WULONG_ANCHOR_ADDRESS=<WulongAnchor>` and `BASE_RPC_URL=<https RPC>` as literals, through [Releases](#releases). At its first boot it anchors the existing chest.
+3. Check with `pnpm verify:attestation <url> --app <DstackApp> --anchor <WulongAnchor>`.
 
 ## Releases
 
@@ -77,7 +87,8 @@ The timelock can change the guardian with `setGuardian`, or disable the path wit
 
 ```bash
 pnpm verify:attestation https://<wulong>/chest/attestation \
-  --app <DstackApp> --from-block <app creation block> [--rpc <url>] [--min-delay <seconds>]
+  --app <DstackApp> --from-block <app creation block> \
+  [--kms <DstackKms>] [--anchor <WulongAnchor>] [--rpc <url>] [--min-delay <seconds>]
 ```
 
 It fails unless:
@@ -85,7 +96,9 @@ It fails unless:
 - the key manifest names that `DstackApp`,
 - the app is owned by a `WulongAppOwner` for that app, whose timelock delay is at least `--min-delay` (7 days by default),
 - `requireTcbUpToDate` is set,
-- the compose hash in the event log is allowed.
+- the compose hash in the event log is allowed,
+- with `--kms`, the identity and relayer `GetKey` chains lead to that `DstackKms`'s root key, for that app,
+- with `--anchor`, the `WulongAnchor` trusts the served relayer.
 
 It warns about a pending ownership transfer, a timelock with another admin, no guardian, several allowed hashes and implementation upgrades, and lists every compose hash ever added, with the blocks it was added and removed at. The event log is only as trustworthy as its RTMR3 replay ([TEE_SETUP.md](./TEE_SETUP.md#measurements)). The script checks the owner's interface, not its bytecode: check it is the verified `WulongAppOwner` source on Basescan once.
 

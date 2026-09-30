@@ -8,6 +8,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- An enclave-derived relayer wallet: its key comes from `GetKey("wulong/relayer/evm/v1", "secp256k1")` and is used directly as the private key. Its address is in the key manifest and `report_data`, and `GET /chest/attestation` serves `relayerAddress`, `relayerPublicKey` and `relayerSignatureChain`. No endpoint signs anything with it ([#49](https://github.com/w3hc/wulong/issues/49)).
+- Chest anchoring, the relayer's first on-chain action: a `WulongAnchor` contract holds the latest `SHA-256(chest.json)` with a sequence number only the relayer can advance. Each write is anchored before it replaces the chest, and startup fails on a chest that does not match the anchor, so the operator cannot roll it back. Configured with `WULONG_ANCHOR_ADDRESS` and `BASE_RPC_URL`; see [`docs/KEY_DERIVATION.md`](docs/KEY_DERIVATION.md#anchoring-the-chest) ([#49](https://github.com/w3hc/wulong/issues/49)).
+- `GET /health/relayer` shows the relayer address, the anchor and the last balance read. A balance above `RELAYER_MAX_BALANCE_WEI` (default 0.01 ETH) is logged ([#49](https://github.com/w3hc/wulong/issues/49)).
+- `pnpm verify:attestation --kms <DstackKms>` verifies the identity and relayer `GetKey` signature chains up to the KMS root read on chain, and `--anchor <WulongAnchor>` checks the anchor trusts the served relayer ([#49](https://github.com/w3hc/wulong/issues/49)).
+
 - On-chain governance for Wulong's `DstackApp`: a `WulongAppOwner` contract lets a Safe-controlled `TimelockController` (7-day delay) make any call to the app, so adding a compose hash is always delayed, and lets a guardian remove compose hashes without delay. Foundry project in [`contracts/`](contracts), tested in CI. See [`docs/GOVERNANCE.md`](docs/GOVERNANCE.md) ([#48](https://github.com/w3hc/wulong/issues/48)).
 - `pnpm governance:propose-release`: builds the Safe batch that allows a release's compose hash and removes every other allowed one, after checking its `app-compose.json` embeds this repository's digest-pinned `docker-compose.yml` ([#48](https://github.com/w3hc/wulong/issues/48)).
 - `pnpm verify:attestation --app <DstackApp>` checks the app's governance (timelocked owner, minimum delay, `requireTcbUpToDate`, running compose hash allowed) and lists every compose hash ever allowed and every implementation upgrade ([#48](https://github.com/w3hc/wulong/issues/48)).
@@ -17,6 +22,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `CORS_ORIGINS`: comma-separated origins of the browser UIs allowed to call the API. Unset allows none; startup fails on an entry that is not an exact origin ([#41](https://github.com/w3hc/wulong/issues/41)).
 
 ### Changed
+
+- `Deploy.s.sol` also deploys the `WulongAnchor` and takes `RELAYER` ([#49](https://github.com/w3hc/wulong/issues/49)).
+- With anchoring on, a store answers `503` when its write cannot be anchored, and takes about one Base block ([#49](https://github.com/w3hc/wulong/issues/49)).
 
 - Production startup fails fast when `SIWE_DOMAIN` is missing, or `TLS_ALT_NAMES` unless `ALLOW_TLS_OUTSIDE_ENCLAVE=true`, naming the missing setting. Env validation no longer skips missing properties. `docker-compose.yml` passes `SIWE_DOMAIN`, which changes its hash ([#44](https://github.com/w3hc/wulong/issues/44)).
 - `GET /health/ready` answers `503` until the keys are derived; it always answered ready ([#44](https://github.com/w3hc/wulong/issues/44)).

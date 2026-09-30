@@ -11,7 +11,9 @@ import { TeePlatformService } from '../attestation/tee-platform.service';
 import { buildReportData } from '../attestation/report-data';
 import { KeyDerivationService } from '../keys/key-derivation.service';
 import { TeeTlsService } from '../tls/tee-tls.service';
+import { RelayerService } from '../relayer/relayer.service';
 import { MlKemEncryptionService } from '../encryption/mlkem-encryption.service';
+import { createHash } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as ethers from 'ethers';
@@ -23,11 +25,13 @@ jest.mock('fs', () => ({
     readFile: jest.fn(),
     writeFile: jest.fn(),
     rename: jest.fn(),
+    rm: jest.fn(),
   },
 }));
 
 // Mock ethers module
 jest.mock('ethers', () => ({
+  ...jest.requireActual<typeof import('ethers')>('ethers'),
   isAddress: jest.fn(),
 }));
 
@@ -51,12 +55,14 @@ describe('SecretService', () => {
 
   const mlkemPublicKey = new Uint8Array(1568).fill(0x01);
   const identityPublicKey = new Uint8Array(65).fill(0x04);
+  const relayerAddress = '0x602cA51341d6d1ff32b2ce8442c5e807A527CA17';
+  const relayer = new Uint8Array(Buffer.from(relayerAddress.slice(2), 'hex'));
 
   const keyManifest = {
     manifest: {
       appId: '0x1111111111111111111111111111111111111111',
       mlkemPublicKeyHash: '0x' + '22'.repeat(32),
-      relayer: '0x0000000000000000000000000000000000000000',
+      relayer: relayerAddress,
       epoch: 1,
     },
     signature: '0x' + '33'.repeat(65),
@@ -67,10 +73,19 @@ describe('SecretService', () => {
     getIdentityPublicKey: jest.fn(),
     getKeyManifest: jest.fn(),
     getIdentitySignatureChain: jest.fn(),
+    getRelayerAddress: jest.fn(),
+    getRelayerSignatureChain: jest.fn(),
+    getRelayerPublicKey: jest.fn(),
   };
 
   const mockTeeTlsService = {
     getLeafCertificateDer: jest.fn(),
+  };
+
+  const mockRelayerService = {
+    isEnabled: jest.fn(),
+    getLatestAnchor: jest.fn(),
+    anchorChest: jest.fn<Promise<string>, [string, bigint]>(),
   };
 
   // Helper to create a valid encrypted payload
@@ -114,6 +129,10 @@ describe('SecretService', () => {
         {
           provide: TeeTlsService,
           useValue: mockTeeTlsService,
+        },
+        {
+          provide: RelayerService,
+          useValue: mockRelayerService,
         },
       ],
     }).compile();
@@ -341,6 +360,9 @@ describe('SecretService', () => {
       const smallService = new SecretService(
         mockTeePlatformService as unknown as TeePlatformService,
         mockMlKemEncryptionService as unknown as MlKemEncryptionService,
+        mockKeyDerivationService as unknown as KeyDerivationService,
+        mockTeeTlsService as unknown as TeeTlsService,
+        mockRelayerService as unknown as RelayerService,
       );
       delete process.env.CHEST_MAX_BYTES;
 
@@ -357,6 +379,9 @@ describe('SecretService', () => {
       const configuredService = new SecretService(
         mockTeePlatformService as unknown as TeePlatformService,
         mockMlKemEncryptionService as unknown as MlKemEncryptionService,
+        mockKeyDerivationService as unknown as KeyDerivationService,
+        mockTeeTlsService as unknown as TeeTlsService,
+        mockRelayerService as unknown as RelayerService,
       );
       delete process.env.CHEST_PATH;
 
@@ -716,13 +741,26 @@ describe('SecretService', () => {
         new Uint8Array([0xaa, 0xbb]),
         new Uint8Array([0xcc]),
       ]);
+      mockKeyDerivationService.getRelayerAddress.mockReturnValue(
+        relayerAddress,
+      );
+      mockKeyDerivationService.getRelayerPublicKey.mockReturnValue(
+        new Uint8Array(65).fill(0x04),
+      );
+      mockKeyDerivationService.getRelayerSignatureChain.mockReturnValue([
+        new Uint8Array([0xdd]),
+      ]);
       mockTeePlatformService.generateAttestationReport.mockResolvedValue(
         mockAttestation,
       );
     });
 
     it('quotes the report_data committing to the keys', async () => {
-      const expected = buildReportData({ mlkemPublicKey, identityPublicKey });
+      const expected = buildReportData({
+        mlkemPublicKey,
+        relayer,
+        identityPublicKey,
+      });
 
       const result = await service.getAttestation();
 
@@ -733,10 +771,13 @@ describe('SecretService', () => {
         ...mockAttestation,
         mlkemPublicKey: Buffer.from(mlkemPublicKey).toString('base64'),
         identityPublicKey: `0x${Buffer.from(identityPublicKey).toString('hex')}`,
+        relayerAddress,
+        relayerPublicKey: '0x' + '04'.repeat(65),
         tlsCertificate: undefined,
         reportData: `0x${expected.toString('hex')}`,
         keyManifest,
         identitySignatureChain: ['0xaabb', '0xcc'],
+        relayerSignatureChain: ['0xdd'],
       });
     });
 
@@ -747,6 +788,7 @@ describe('SecretService', () => {
       );
       const expected = buildReportData({
         mlkemPublicKey,
+        relayer,
         identityPublicKey,
         tlsCertificateDer,
       });
@@ -773,19 +815,21 @@ describe('SecretService', () => {
       expect(result.reportData.endsWith(nonce.toString('hex'))).toBe(true);
     });
 
-    it.each(['getMlKemPublicKey', 'getKeyManifest'] as const)(
-      'refuses to attest when %s returns nothing',
-      async (method) => {
-        mockKeyDerivationService[method].mockReturnValue(null);
+    it.each([
+      'getMlKemPublicKey',
+      'getRelayerAddress',
+      'getRelayerPublicKey',
+      'getKeyManifest',
+    ] as const)('refuses to attest when %s returns nothing', async (method) => {
+      mockKeyDerivationService[method].mockReturnValue(null);
 
-        await expect(service.getAttestation()).rejects.toThrow(
-          ServiceUnavailableException,
-        );
-        expect(
-          mockTeePlatformService.generateAttestationReport,
-        ).not.toHaveBeenCalled();
-      },
-    );
+      await expect(service.getAttestation()).rejects.toThrow(
+        ServiceUnavailableException,
+      );
+      expect(
+        mockTeePlatformService.generateAttestationReport,
+      ).not.toHaveBeenCalled();
+    });
 
     it('should propagate errors from TEE platform service', async () => {
       mockTeePlatformService.generateAttestationReport.mockRejectedValue(
@@ -795,6 +839,204 @@ describe('SecretService', () => {
       await expect(service.getAttestation()).rejects.toThrow(
         'TEE attestation generation failed',
       );
+    });
+  });
+
+  describe('anchoring', () => {
+    const chestPath = path.join(process.cwd(), 'chest.json');
+    const pendingPath = `${chestPath}.pending`;
+    const chest = Buffer.from('{"a":1}');
+    const pending = Buffer.from('{"a":1,"b":2}');
+    const rootOf = (bytes: Buffer) =>
+      `0x${createHash('sha256').update(bytes).digest('hex')}`;
+    const files = (contents: Record<string, Buffer>) =>
+      (fs.promises.readFile as jest.Mock).mockImplementation((file: string) =>
+        file in contents
+          ? Promise.resolve(contents[file])
+          : Promise.reject(
+              Object.assign(new Error('ENOENT'), { code: 'ENOENT' }),
+            ),
+      );
+
+    describe('at boot', () => {
+      it('does nothing when the relayer does not anchor', async () => {
+        mockRelayerService.getLatestAnchor.mockResolvedValue(null);
+
+        await service.onModuleInit();
+
+        expect(fs.promises.readFile).not.toHaveBeenCalled();
+      });
+
+      it('accepts the anchored chest and drops a stale pending write', async () => {
+        files({ [chestPath]: chest, [pendingPath]: pending });
+        mockRelayerService.getLatestAnchor.mockResolvedValue({
+          root: rootOf(chest),
+          seq: 3n,
+        });
+
+        await service.onModuleInit();
+
+        expect(fs.promises.rm).toHaveBeenCalledWith(pendingPath, {
+          force: true,
+        });
+        expect(fs.promises.rename).not.toHaveBeenCalled();
+      });
+
+      it('promotes a pending write that was anchored before a crash', async () => {
+        files({ [chestPath]: chest, [pendingPath]: pending });
+        mockRelayerService.getLatestAnchor.mockResolvedValue({
+          root: rootOf(pending),
+          seq: 4n,
+        });
+
+        await service.onModuleInit();
+
+        expect(fs.promises.rename).toHaveBeenCalledWith(pendingPath, chestPath);
+      });
+
+      it.each([
+        ['rolled back', { [chestPath]: chest }],
+        ['deleted', {}],
+      ])('refuses a chest that was %s', async (_, contents) => {
+        files(contents);
+        mockRelayerService.getLatestAnchor.mockResolvedValue({
+          root: rootOf(pending),
+          seq: 4n,
+        });
+
+        await expect(service.onModuleInit()).rejects.toThrow(
+          'rolled back or altered',
+        );
+      });
+
+      it('anchors a chest that was never anchored', async () => {
+        files({ [chestPath]: chest });
+        mockRelayerService.getLatestAnchor.mockResolvedValue({
+          root: '0x' + '00'.repeat(32),
+          seq: 0n,
+        });
+
+        await service.onModuleInit();
+
+        expect(mockRelayerService.anchorChest).toHaveBeenCalledWith(
+          rootOf(chest),
+          1n,
+        );
+      });
+
+      it('anchors nothing when there is no chest yet', async () => {
+        files({});
+        mockRelayerService.getLatestAnchor.mockResolvedValue({
+          root: '0x' + '00'.repeat(32),
+          seq: 0n,
+        });
+
+        await service.onModuleInit();
+
+        expect(mockRelayerService.anchorChest).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('on store', () => {
+      const payload = () => createMockEncryptedPayload();
+      const owner = '0x' + '12'.repeat(20);
+      let written: string;
+      const order: string[] = [];
+
+      beforeEach(async () => {
+        order.length = 0;
+        mockMlKemEncryptionService.isAvailable.mockReturnValue(true);
+        (ethers.isAddress as unknown as jest.Mock).mockReturnValue(true);
+        (fs.existsSync as jest.Mock).mockReturnValue(false);
+        (fs.promises.writeFile as jest.Mock).mockImplementation(
+          (file: string, data: string) => {
+            order.push(`write ${file}`);
+            written = data;
+            return Promise.resolve();
+          },
+        );
+        (fs.promises.rename as jest.Mock).mockImplementation(() => {
+          order.push('rename');
+          return Promise.resolve();
+        });
+        mockRelayerService.isEnabled.mockReturnValue(true);
+        mockRelayerService.anchorChest.mockImplementation(() => {
+          order.push('anchor');
+          return Promise.resolve('0xhash');
+        });
+        files({ [chestPath]: chest });
+        mockRelayerService.getLatestAnchor.mockResolvedValue({
+          root: rootOf(chest),
+          seq: 3n,
+        });
+        await service.onModuleInit();
+      });
+
+      it('anchors the pending chest before it replaces the chest', async () => {
+        await service.store(payload(), [owner], owner);
+
+        expect(order).toEqual([`write ${pendingPath}`, 'anchor', 'rename']);
+        expect(mockRelayerService.anchorChest).toHaveBeenCalledWith(
+          rootOf(Buffer.from(written)),
+          4n,
+        );
+        expect(fs.promises.rename).toHaveBeenCalledWith(pendingPath, chestPath);
+      });
+
+      it('increments the seq on every write', async () => {
+        await service.store(payload(), [owner], owner);
+        await service.store(payload(), [owner], owner);
+
+        expect(
+          mockRelayerService.anchorChest.mock.calls.map((c) => c[1]),
+        ).toEqual([4n, 5n]);
+      });
+
+      it('keeps the chest and fails the store when anchoring fails', async () => {
+        mockRelayerService.anchorChest.mockRejectedValue(new Error('reverted'));
+
+        await expect(
+          service.store(payload() as never, [owner], owner),
+        ).rejects.toThrow(ServiceUnavailableException);
+        expect(fs.promises.rename).not.toHaveBeenCalled();
+        expect(fs.promises.rm).toHaveBeenCalledWith(pendingPath, {
+          force: true,
+        });
+      });
+
+      it('commits a write whose transaction was included despite the error', async () => {
+        mockRelayerService.anchorChest.mockImplementation(() => {
+          mockRelayerService.getLatestAnchor.mockResolvedValue({
+            root: rootOf(Buffer.from(written)),
+            seq: 4n,
+          });
+          return Promise.reject(new Error('timeout'));
+        });
+
+        await service.store(payload(), [owner], owner);
+
+        expect(fs.promises.rename).toHaveBeenCalledWith(pendingPath, chestPath);
+      });
+
+      it('resyncs the seq after a failure', async () => {
+        mockRelayerService.anchorChest.mockRejectedValueOnce(
+          new Error('reverted'),
+        );
+        mockRelayerService.getLatestAnchor.mockResolvedValue({
+          root: '0x' + 'ff'.repeat(32),
+          seq: 7n,
+        });
+
+        await expect(
+          service.store(payload() as never, [owner], owner),
+        ).rejects.toThrow(ServiceUnavailableException);
+        await service.store(payload(), [owner], owner);
+
+        expect(mockRelayerService.anchorChest).toHaveBeenLastCalledWith(
+          expect.any(String),
+          8n,
+        );
+      });
     });
   });
 });

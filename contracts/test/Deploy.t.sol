@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import {Test} from "forge-std/Test.sol";
 import {TimelockController} from "@openzeppelin/contracts/governance/TimelockController.sol";
 import {IDstackApp} from "../src/IDstackApp.sol";
+import {WulongAnchor} from "../src/WulongAnchor.sol";
 import {WulongAppOwner} from "../src/WulongAppOwner.sol";
 import {Deploy} from "../script/Deploy.s.sol";
 
@@ -11,10 +12,12 @@ contract DeployTest is Test {
     address app = makeAddr("app");
     address safe = makeAddr("safe");
     address guardian = makeAddr("guardian");
+    address relayer = makeAddr("relayer");
 
     function test_wiresTheTimelock() public {
         Deploy script = new Deploy();
-        (TimelockController timelock, WulongAppOwner appOwner) = script.deploy(IDstackApp(app), safe, guardian, 7 days);
+        (TimelockController timelock, WulongAppOwner appOwner, WulongAnchor anchor) =
+            script.deploy(IDstackApp(app), safe, relayer, guardian, 7 days);
 
         assertEq(timelock.getMinDelay(), 7 days);
         assertTrue(timelock.hasRole(timelock.PROPOSER_ROLE(), safe));
@@ -28,5 +31,8 @@ contract DeployTest is Test {
         assertEq(address(appOwner.app()), app);
         assertEq(appOwner.timelock(), address(timelock));
         assertEq(appOwner.guardian(), guardian);
+
+        assertEq(anchor.timelock(), address(timelock));
+        assertEq(anchor.relayer(), relayer);
     }
 }

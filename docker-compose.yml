@@ -21,6 +21,10 @@ services:
       # ALLOW_TLS_OUTSIDE_ENCLAVE is deliberately not passed through: opting out
       # takes a compose change, which changes the attested compose hash.
       - TLS_ALT_NAMES=${TLS_ALT_NAMES}
+      # Once WulongAnchor is deployed, set these as literals, never ${...}, so the
+      # compose hash commits to them. See docs/GOVERNANCE.md#anchor.
+      # - WULONG_ANCHOR_ADDRESS=0x...
+      # - BASE_RPC_URL=https://...
     restart: unless-stopped
 
 volumes:
