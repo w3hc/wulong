@@ -60,7 +60,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DIGEST: ${{ steps.build.outputs.digest }}
         run: |
-          notes=$(printf '## Image\n\n```yaml\nimage: %s@%s\n```\n\nPin this line in `docker-compose.yml` to deploy this release. See [docs/DOCKER.md](%s/%s/blob/%s/docs/DOCKER.md#releases) to rebuild it and compare the digest.\n' "$IMAGE" "$DIGEST" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_REF_NAME")
+          # The source commit and the digest are what a reviewer of the timelocked
+          # addComposeHash needs to rebuild the image and audit the code
+          notes=$(printf '## Image\n\nBuilt from %s/%s/commit/%s.\n\n```yaml\nimage: %s@%s\n```\n\nPin this line in `docker-compose.yml` to deploy this release. See [docs/DOCKER.md](%s/%s/blob/%s/docs/DOCKER.md#releases) to rebuild it and compare the digest.\n\n## Governance\n\nThis release can derive Wulong'"'"'s keys only once its compose hash is added to the DstackApp, through the timelock, in a batch that removes the previous one. See [docs/GOVERNANCE.md](%s/%s/blob/%s/docs/GOVERNANCE.md#releases).\n' "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_SHA" "$IMAGE" "$DIGEST" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_REF_NAME" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_REF_NAME")
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             body=$(gh release view "$GITHUB_REF_NAME" --json body -q .body)
             if grep -qF "$IMAGE@$DIGEST" <<<"$body"; then
