@@ -5,6 +5,7 @@ import { App } from 'supertest/types';
 import { AppModule } from './../src/app.module';
 import { Wallet } from 'ethers';
 import { SiweMessage } from 'siwe';
+import { createHmac } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import { MlKemEncryptionService } from '../src/encryption/mlkem-encryption.service';
@@ -111,6 +112,8 @@ describe('Chest Endpoints (e2e)', () => {
         getRelayerAddress: () => '0x' + '55'.repeat(20),
         getRelayerSignatureChain: () => [new Uint8Array([0xbb])],
         getRelayerPublicKey: () => new Uint8Array(65).fill(0x04),
+        macChestEntry: (data: Uint8Array) =>
+          createHmac('sha256', 'e2e').update(data).digest(),
       })
       .overrideProvider(TeeTlsService)
       .useValue({

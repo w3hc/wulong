@@ -13,7 +13,7 @@ import { KeyDerivationService } from '../keys/key-derivation.service';
 import { TeeTlsService } from '../tls/tee-tls.service';
 import { RelayerService } from '../relayer/relayer.service';
 import { MlKemEncryptionService } from '../encryption/mlkem-encryption.service';
-import { createHash } from 'crypto';
+import { createHash, createHmac } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as ethers from 'ethers';
@@ -76,7 +76,38 @@ describe('SecretService', () => {
     getRelayerAddress: jest.fn(),
     getRelayerSignatureChain: jest.fn(),
     getRelayerPublicKey: jest.fn(),
+    macChestEntry: jest.fn(),
   };
+
+  const macKey = Buffer.alloc(32, 0x42);
+  const macChestEntry = (data: Uint8Array) =>
+    createHmac('sha256', macKey).update(data).digest();
+
+  // Pins the MAC encoding: changing it makes every stored entry unreadable
+  const seal = (
+    slot: string,
+    encryptedPayload: ReturnType<typeof createMockEncryptedPayload>,
+    publicAddresses: string[],
+  ) => ({
+    version: 2,
+    encryptedPayload,
+    publicAddresses,
+    mac: macChestEntry(
+      Buffer.from(
+        JSON.stringify([
+          'wulong-chest-entry',
+          2,
+          slot,
+          1,
+          encryptedPayload.recipients.map((r) => [r.publicKey, r.ciphertext]),
+          encryptedPayload.encryptedData,
+          encryptedPayload.iv,
+          encryptedPayload.authTag,
+          publicAddresses,
+        ]),
+      ),
+    ).toString('hex'),
+  });
 
   const mockTeeTlsService = {
     getLeafCertificateDer: jest.fn(),
@@ -144,6 +175,7 @@ describe('SecretService', () => {
     // Reset mocks
     jest.clearAllMocks();
     mockMlKemEncryptionService.getPublicKey.mockReturnValue(serverPublicKey);
+    mockKeyDerivationService.macChestEntry.mockImplementation(macChestEntry);
   });
 
   afterEach(() => {
@@ -556,12 +588,10 @@ describe('SecretService', () => {
     const testSecret = 'my-secret';
 
     beforeEach(() => {
-      const mockEncryptedPayload = createMockEncryptedPayload();
       const mockData = {
-        [testSlot]: {
-          encryptedPayload: mockEncryptedPayload,
-          publicAddresses: [testAddress.toLowerCase()],
-        },
+        [testSlot]: seal(testSlot, createMockEncryptedPayload(), [
+          testAddress.toLowerCase(),
+        ]),
       };
 
       jest.spyOn(fs, 'existsSync').mockReturnValue(true);
@@ -637,16 +667,114 @@ describe('SecretService', () => {
       );
     });
 
+    describe('entry authentication', () => {
+      const attacker = '0x70997970c51812dc3a010c7d01b50e0d17dc79c8';
+      const chestWith = (entries: Record<string, unknown>) =>
+        jest
+          .spyOn(fs.promises, 'readFile')
+          .mockResolvedValue(JSON.stringify(entries));
+
+      it('rejects an address appended to the access list on disk', async () => {
+        const entry = seal(testSlot, createMockEncryptedPayload(), [
+          testAddress,
+        ]);
+        entry.publicAddresses.push(attacker);
+        chestWith({ [testSlot]: entry });
+
+        await expect(service.access(testSlot, attacker)).rejects.toThrow(
+          new NotFoundException('Slot not found'),
+        );
+        await expect(service.access(testSlot, testAddress)).rejects.toThrow(
+          new NotFoundException('Slot not found'),
+        );
+        expect(
+          mockMlKemEncryptionService.decryptMultiRecipient,
+        ).not.toHaveBeenCalled();
+      });
+
+      it('rejects a payload swapped on disk', async () => {
+        const entry = seal(testSlot, createMockEncryptedPayload(), [
+          testAddress,
+        ]);
+        entry.encryptedPayload.encryptedData = Buffer.alloc(100, 'x').toString(
+          'base64',
+        );
+        chestWith({ [testSlot]: entry });
+
+        await expect(service.access(testSlot, testAddress)).rejects.toThrow(
+          new NotFoundException('Slot not found'),
+        );
+      });
+
+      it('rejects an entry moved to another slot', async () => {
+        const otherSlot = 'b'.repeat(64);
+        chestWith({
+          [otherSlot]: seal(testSlot, createMockEncryptedPayload(), [
+            testAddress,
+          ]),
+        });
+
+        await expect(service.access(otherSlot, testAddress)).rejects.toThrow(
+          new NotFoundException('Slot not found'),
+        );
+      });
+
+      it('rejects a legacy entry without a version or MAC', async () => {
+        chestWith({
+          [testSlot]: {
+            encryptedPayload: createMockEncryptedPayload(),
+            publicAddresses: [testAddress],
+          },
+        });
+
+        await expect(service.access(testSlot, testAddress)).rejects.toThrow(
+          new NotFoundException('Slot not found'),
+        );
+      });
+
+      it('rejects a malformed entry as not found rather than failing', async () => {
+        chestWith({
+          [testSlot]: { version: 2, mac: 'ab', publicAddresses: [testAddress] },
+        });
+
+        await expect(service.access(testSlot, testAddress)).rejects.toThrow(
+          new NotFoundException('Slot not found'),
+        );
+      });
+
+      it('accesses what store sealed', async () => {
+        jest.spyOn(fs, 'existsSync').mockReturnValue(false);
+        const payload = { ...createMockEncryptedPayload(), extra: 'dropped' };
+        const slot = await service.store(payload, [testAddress], testAddress);
+        const written = JSON.parse(
+          (
+            (fs.promises.writeFile as jest.Mock).mock.calls[0] as [
+              string,
+              string,
+            ]
+          )[1],
+        ) as Record<string, { version: number; encryptedPayload: object }>;
+
+        expect(written[slot].version).toBe(2);
+        expect(written[slot].encryptedPayload).not.toHaveProperty('extra');
+
+        jest.spyOn(fs, 'existsSync').mockReturnValue(true);
+        chestWith(written);
+        await expect(service.access(slot, testAddress)).resolves.toBe(
+          testSecret,
+        );
+      });
+    });
+
     it('should allow access if caller is one of multiple owners', async () => {
       const address1 = '0xbfbaa5a59e3b6c06aff9c975092b8705f804fa1c';
       const address2 = '0x70997970C51812dc3A010C7d01b50e0d17dc79C8';
 
-      const mockEncryptedPayload = createMockEncryptedPayload();
       const mockData = {
-        [testSlot]: {
-          encryptedPayload: mockEncryptedPayload,
-          publicAddresses: [address1.toLowerCase(), address2.toLowerCase()],
-        },
+        [testSlot]: seal(testSlot, createMockEncryptedPayload(), [
+          address1.toLowerCase(),
+          address2.toLowerCase(),
+        ]),
       };
 
       jest
@@ -941,6 +1069,26 @@ describe('SecretService', () => {
       );
 
     describe('at boot', () => {
+      it('warns about entries that fail authentication', async () => {
+        const warn = jest.spyOn(service['logger'], 'warn').mockImplementation();
+        const slot = 'a'.repeat(64);
+        mockRelayerService.getLatestAnchor.mockResolvedValue(null);
+        mockMlKemEncryptionService.isAvailable.mockReturnValue(true);
+        (fs.existsSync as jest.Mock).mockReturnValue(true);
+        (fs.promises.readFile as jest.Mock).mockResolvedValue(
+          JSON.stringify({
+            [slot]: seal(slot, createMockEncryptedPayload(), ['0x01']),
+            ['b'.repeat(64)]: { publicAddresses: [] },
+          }),
+        );
+
+        await service.onModuleInit();
+
+        expect(warn).toHaveBeenCalledWith(
+          expect.stringMatching(/^1 chest entries fail authentication/),
+        );
+      });
+
       it('does nothing when the relayer does not anchor', async () => {
         mockRelayerService.getLatestAnchor.mockResolvedValue(null);
 
