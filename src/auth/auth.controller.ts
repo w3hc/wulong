@@ -13,8 +13,8 @@ export class AuthController {
   @ApiOperation({
     summary: 'Generate a nonce for SIWE authentication',
     description:
-      'Returns a random nonce that must be included in the SIWE message ' +
-      'signed by the given address. The nonce is single-use and expires after 5 minutes.',
+      'Returns a nonce that must be included in the SIWE message signed by ' +
+      'the given address. The nonce is single-use and expires after 5 minutes.',
   })
   @ApiResponse({
     status: 201,
@@ -23,7 +23,7 @@ export class AuthController {
   })
   @ApiResponse({
     status: 429,
-    description: 'Rate limit exceeded, or too many pending nonces',
+    description: 'Rate limit exceeded',
   })
   generateNonce(@Body() body: NonceRequestDto): NonceResponseDto {
     const nonce = this.siweService.generateNonce(body.address);

@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { AuthController } from './auth.controller';
 import { SiweService } from './siwe.service';
+import { KeyDerivationService } from '../keys/key-derivation.service';
 
 const body = { address: '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266' };
 
@@ -11,7 +12,13 @@ describe('AuthController', () => {
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       controllers: [AuthController],
-      providers: [SiweService],
+      providers: [
+        SiweService,
+        {
+          provide: KeyDerivationService,
+          useValue: { isAvailable: () => false },
+        },
+      ],
     }).compile();
 
     authController = module.get<AuthController>(AuthController);

@@ -114,6 +114,9 @@ describe('Chest Endpoints (e2e)', () => {
         getRelayerPublicKey: () => new Uint8Array(65).fill(0x04),
         macChestEntry: (data: Uint8Array) =>
           createHmac('sha256', 'e2e').update(data).digest(),
+        isAvailable: () => true,
+        macSiweNonce: (data: Uint8Array) =>
+          createHmac('sha256', 'e2e-siwe').update(data).digest(),
       })
       .overrideProvider(TeeTlsService)
       .useValue({

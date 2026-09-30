@@ -1,16 +1,32 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { SiweService } from './siwe.service';
 import { SiweMessage } from 'siwe';
+import { createHmac } from 'crypto';
 import { Wallet } from 'ethers';
+import { KeyDerivationService } from '../keys/key-derivation.service';
 
 const ADDRESS = '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266';
+
+const noKeys = {
+  isAvailable: () => false,
+} as unknown as KeyDerivationService;
+
+const derivedKeys = (key: string) =>
+  ({
+    isAvailable: () => true,
+    macSiweNonce: (data: Uint8Array) =>
+      createHmac('sha256', key).update(data).digest(),
+  }) as unknown as KeyDerivationService;
 
 describe('SiweService', () => {
   let service: SiweService;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
-      providers: [SiweService],
+      providers: [
+        SiweService,
+        { provide: KeyDerivationService, useValue: noKeys },
+      ],
     }).compile();
 
     service = module.get<SiweService>(SiweService);
@@ -24,6 +40,7 @@ describe('SiweService', () => {
     it('should generate an alphanumeric string (at least 8 characters)', () => {
       const nonce = service.generateNonce(ADDRESS);
       expect(nonce).toMatch(/^[A-Za-z0-9]{8,}$/);
+      expect(nonce).toHaveLength(64);
     });
 
     it('should generate unique nonces', () => {
@@ -32,10 +49,10 @@ describe('SiweService', () => {
       expect(nonce1).not.toBe(nonce2);
     });
 
-    it('should store nonce internally', () => {
-      const nonce = service.generateNonce(ADDRESS);
-      // Nonce should be in internal storage (we'll verify through verification)
-      expect(nonce).toBeDefined();
+    it('should store nothing until the nonce is used', () => {
+      service.generateNonce(ADDRESS);
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+      expect(((service as any).used as Map<string, number>).size).toBe(0);
     });
   });
 
@@ -137,17 +154,12 @@ describe('SiweService', () => {
     });
 
     it('should reject expired nonce', async () => {
+      const now = Date.now();
+      const clock = jest
+        .spyOn(Date, 'now')
+        .mockReturnValue(now - 6 * 60 * 1000);
       const nonce = service.generateNonce(ADDRESS);
-
-      // Mock nonce as expired by manipulating time
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-      const nonces = (service as any).nonces as Map<
-        string,
-        { nonce: string; createdAt: number }
-      >;
-
-      const nonceEntry = nonces.get(nonce)!;
-      nonceEntry.createdAt = Date.now() - 6 * 60 * 1000; // 6 minutes ago
+      clock.mockRestore();
 
       const siweMessage = new SiweMessage({
         domain: 'localhost',
@@ -220,6 +232,26 @@ describe('SiweService', () => {
       expect(await service.verifySignature(message, signature)).toBeNull();
     });
 
+    it('should reject a tampered nonce', async () => {
+      const nonce = service.generateNonce(ADDRESS);
+      const last = nonce.at(-1) === '0' ? '1' : '0';
+      const { message, signature } = await signed({
+        nonce: nonce.slice(0, -1) + last,
+      });
+      expect(await service.verifySignature(message, signature)).toBeNull();
+    });
+
+    it('should reject a nonce with a forged issue time', async () => {
+      const nonce = service.generateNonce(ADDRESS);
+      const later = (BigInt(`0x${nonce.slice(0, 16)}`) + 1n)
+        .toString(16)
+        .padStart(16, '0');
+      const { message, signature } = await signed({
+        nonce: later + nonce.slice(16),
+      });
+      expect(await service.verifySignature(message, signature)).toBeNull();
+    });
+
     it('should accept the address in any case', async () => {
       const { message, signature } = await signed({
         nonce: service.generateNonce(ADDRESS.toLowerCase()),
@@ -258,7 +290,7 @@ describe('SiweService', () => {
     it('should throw in production when SIWE_DOMAIN is unset', () => {
       process.env.NODE_ENV = 'production';
       delete process.env.SIWE_DOMAIN;
-      expect(() => new SiweService()).toThrow('SIWE_DOMAIN');
+      expect(() => new SiweService(noKeys)).toThrow('SIWE_DOMAIN');
     });
 
     const signIn = async (siwe: SiweService, domain: string) => {
@@ -279,7 +311,7 @@ describe('SiweService', () => {
 
     it('should accept every host listed in SIWE_DOMAIN', async () => {
       process.env.SIWE_DOMAIN = 'app.example, other.example:8443';
-      const custom = new SiweService();
+      const custom = new SiweService(noKeys);
 
       expect(await signIn(custom, 'app.example')).toBe(true);
       expect(await signIn(custom, 'other.example:8443')).toBe(true);
@@ -305,23 +337,23 @@ describe('SiweService', () => {
       };
 
       process.env.NODE_ENV = 'development';
-      expect(await signHttp(new SiweService())).toBe(wallet.address);
+      expect(await signHttp(new SiweService(noKeys))).toBe(wallet.address);
 
       process.env.NODE_ENV = 'production';
-      expect(await signHttp(new SiweService())).toBeNull();
+      expect(await signHttp(new SiweService(noKeys))).toBeNull();
     });
 
     it('should accept https or no scheme in production', async () => {
       process.env.NODE_ENV = 'production';
       process.env.SIWE_DOMAIN = 'app.example';
-      const custom = new SiweService();
+      const custom = new SiweService(noKeys);
 
       expect(await signIn(custom, 'app.example')).toBe(true);
     });
 
     it('should default to localhost with and without port 3000', async () => {
       delete process.env.SIWE_DOMAIN;
-      const custom = new SiweService();
+      const custom = new SiweService(noKeys);
 
       expect(await signIn(custom, 'localhost')).toBe(true);
       expect(await signIn(custom, 'localhost:3000')).toBe(true);
@@ -329,66 +361,73 @@ describe('SiweService', () => {
     });
   });
 
-  describe('cleanExpiredNonces', () => {
-    it('should clean up expired nonces when generating new nonce', () => {
-      // Generate a nonce
-      const nonce1 = service.generateNonce(ADDRESS);
-
-      // Access the internal nonces map to manipulate it
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-      const nonces = (service as any).nonces as Map<
-        string,
-        { nonce: string; createdAt: number }
-      >;
-
-      // Manually set the nonce as expired (> 5 minutes old)
-      const expiredEntry = nonces.get(nonce1);
-      if (expiredEntry) {
-        expiredEntry.createdAt = Date.now() - 6 * 60 * 1000; // 6 minutes ago
-      }
-
-      // Verify the expired nonce is still in the map
-      expect(nonces.has(nonce1)).toBe(true);
-
-      // Generate a new nonce, which should trigger cleanup
-      const nonce2 = service.generateNonce(ADDRESS);
-
-      // The expired nonce should now be removed
-      expect(nonces.has(nonce1)).toBe(false);
-      expect(nonces.has(nonce2)).toBe(true);
-    });
-  });
-
-  describe('nonce cap', () => {
-    const fill = (createdAt: number) => {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-      const nonces = (service as any).nonces as Map<
-        string,
-        { nonce: string; address: string; createdAt: number }
-      >;
-      for (let i = 0; i < 10_000; i++) {
-        nonces.set(`n${i}`, { nonce: `n${i}`, address: ADDRESS, createdAt });
-      }
-      return nonces;
+  describe('stateless nonces', () => {
+    const signIn = async (siwe: SiweService, issuer = siwe) => {
+      const wallet = Wallet.createRandom();
+      const message = new SiweMessage({
+        domain: 'localhost',
+        address: wallet.address,
+        uri: 'https://localhost:3000',
+        version: '1',
+        chainId: 1,
+        nonce: issuer.generateNonce(wallet.address),
+        issuedAt: new Date().toISOString(),
+      }).prepareMessage();
+      const signature = await wallet.signMessage(message);
+      return (
+        (await siwe.verifySignature(message, signature)) === wallet.address
+      );
     };
 
-    it('should reject new nonces once the store is full', () => {
-      const nonces = fill(Date.now());
+    it('should keep issuing nonces however many are pending', async () => {
+      for (let i = 0; i < 20_000; i++) {
+        service.generateNonce(Wallet.createRandom().address);
+      }
 
-      expect(() => service.generateNonce(ADDRESS)).toThrow(
-        'Too many pending nonces',
-      );
-      expect(nonces.size).toBe(10_000);
-      expect(nonces.has('n0')).toBe(true);
+      expect(await signIn(service)).toBe(true);
     });
 
-    it('should accept new nonces once pending ones expire', () => {
-      const nonces = fill(Date.now() - 6 * 60 * 1000);
+    it('should verify nonces across instances sharing the derived key', async () => {
+      const keys = derivedKeys('k');
 
-      const nonce = service.generateNonce(ADDRESS);
+      expect(await signIn(new SiweService(keys), new SiweService(keys))).toBe(
+        true,
+      );
+      expect(
+        await signIn(
+          new SiweService(derivedKeys('other')),
+          new SiweService(keys),
+        ),
+      ).toBe(false);
+    });
 
-      expect(nonces.size).toBe(1);
-      expect(nonces.has(nonce)).toBe(true);
+    it('should not accept nonces from another fallback key', async () => {
+      expect(await signIn(service, new SiweService(noKeys))).toBe(false);
+    });
+
+    it('should forget used nonces once they expire', async () => {
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+      const used = (service as any).used as Map<string, number>;
+      expect(await signIn(service)).toBe(true);
+      expect(used.size).toBe(1);
+
+      const clock = jest
+        .spyOn(Date, 'now')
+        .mockReturnValue(Date.now() + 6 * 60 * 1000);
+      const wallet = Wallet.createRandom();
+      const message = new SiweMessage({
+        domain: 'localhost',
+        address: wallet.address,
+        uri: 'https://localhost:3000',
+        version: '1',
+        chainId: 1,
+        nonce: service.generateNonce(wallet.address),
+        issuedAt: new Date(Date.now()).toISOString(),
+      }).prepareMessage();
+      await service.verifySignature(message, await wallet.signMessage(message));
+      clock.mockRestore();
+
+      expect(used.size).toBe(1);
     });
   });
 });

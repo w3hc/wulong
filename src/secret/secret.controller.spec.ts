@@ -9,6 +9,7 @@ import { SecretController } from './secret.controller';
 import { SecretService } from './secret.service';
 import { SiweGuard } from '../auth/siwe.guard';
 import { SiweService } from '../auth/siwe.service';
+import { KeyDerivationService } from '../keys/key-derivation.service';
 import { StoreRequestDto } from './dto/store-request.dto';
 
 describe('SecretController', () => {
@@ -32,6 +33,10 @@ describe('SecretController', () => {
         },
         SiweGuard,
         SiweService,
+        {
+          provide: KeyDerivationService,
+          useValue: { isAvailable: () => false },
+        },
       ],
     }).compile();
 

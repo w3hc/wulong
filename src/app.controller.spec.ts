@@ -3,6 +3,7 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { SiweService } from './auth/siwe.service';
 import { SiweGuard } from './auth/siwe.guard';
+import { KeyDerivationService } from './keys/key-derivation.service';
 import { ExecutionContext, UnauthorizedException } from '@nestjs/common';
 
 describe('AppController', () => {
@@ -14,7 +15,15 @@ describe('AppController', () => {
   beforeEach(async () => {
     const app: TestingModule = await Test.createTestingModule({
       controllers: [AppController],
-      providers: [AppService, SiweService, SiweGuard],
+      providers: [
+        AppService,
+        SiweService,
+        SiweGuard,
+        {
+          provide: KeyDerivationService,
+          useValue: { isAvailable: () => false },
+        },
+      ],
     }).compile();
 
     appController = app.get<AppController>(AppController);

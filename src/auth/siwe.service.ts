@@ -1,22 +1,21 @@
-import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
-import { SiweMessage, generateNonce } from 'siwe';
+import { createHmac, randomBytes, timingSafeEqual } from 'crypto';
+import { Injectable } from '@nestjs/common';
+import { SiweMessage } from 'siwe';
+import { KeyDerivationService } from '../keys/key-derivation.service';
 
-interface NonceEntry {
-  nonce: string;
-  address: string;
-  createdAt: number;
-}
+// A nonce is hex(issuedAt u64be || random || tag): 64 hex characters
+const RANDOM_BYTES = 8;
+const TAG_BYTES = 16;
+const NONCE_PATTERN = /^[0-9a-f]{64}$/;
 
 @Injectable()
 export class SiweService {
-  // In-memory nonce storage (ephemeral, TEE-friendly)
-  private readonly nonces = new Map<string, NonceEntry>();
+  // Nonces seen by a verification attempt, in insertion order, with the
+  // time they can be forgotten. Pending nonces are not stored at all.
+  private readonly used = new Map<string, number>();
 
   // Nonce expires after 5 minutes
   private readonly NONCE_TTL = 5 * 60 * 1000;
-
-  // Upper bound on pending nonces, so the store cannot exhaust TEE memory
-  private readonly MAX_NONCES = 10_000;
 
   // Tolerated clock drift between the client and the server
   private readonly CLOCK_SKEW = 30 * 1000;
@@ -27,7 +26,11 @@ export class SiweService {
   // Origin schemes allowed; EIP-4361 treats a missing scheme as https
   private readonly schemes: string[];
 
-  constructor() {
+  // Used only when key derivation is unavailable, which aborts startup in
+  // production: nonces then do not survive a restart or span instances
+  private readonly fallbackKey = randomBytes(32);
+
+  constructor(private readonly keys: KeyDerivationService) {
     const domains = (process.env.SIWE_DOMAIN ?? '')
       .split(',')
       .map((domain) => domain.trim())
@@ -41,30 +44,20 @@ export class SiweService {
   }
 
   /**
-   * Generate a cryptographically secure random nonce
-   * bound to the address that will sign with it.
-   * Nonces are stored in-memory only (no persistence).
-   * Once MAX_NONCES are pending, new requests are rejected
-   * rather than evicting live nonces.
+   * Generate a nonce bound to the address that will sign with it.
+   * The nonce carries its issue time and an HMAC under an enclave-derived
+   * key, so nothing is stored until it is used and pending nonces cannot
+   * exhaust memory.
    */
   generateNonce(address: string): string {
-    this.cleanExpiredNonces();
-    if (this.nonces.size >= this.MAX_NONCES) {
-      throw new HttpException(
-        'Too many pending nonces',
-        HttpStatus.TOO_MANY_REQUESTS,
-      );
-    }
-
-    const nonce = generateNonce();
-
-    this.nonces.set(nonce, {
-      nonce,
-      address: address.toLowerCase(),
-      createdAt: Date.now(),
-    });
-
-    return nonce;
+    const issuedAt = Buffer.alloc(8);
+    issuedAt.writeBigUInt64BE(BigInt(Date.now()));
+    const random = randomBytes(RANDOM_BYTES);
+    return Buffer.concat([
+      issuedAt,
+      random,
+      this.tag(issuedAt, random, address),
+    ]).toString('hex');
   }
 
   /**
@@ -78,31 +71,31 @@ export class SiweService {
     try {
       const siweMessage = new SiweMessage(message);
 
-      const nonceEntry = this.nonces.get(siweMessage.nonce);
-      if (!nonceEntry) {
-        return null; // Nonce not found or already used
+      const createdAt = this.checkNonce(siweMessage.nonce, siweMessage.address);
+      if (createdAt === null) {
+        return null; // Forged, or issued to another address
+      }
+
+      const now = Date.now();
+      if (now - createdAt > this.NONCE_TTL) {
+        return null; // Nonce expired
       }
 
       // Single-use nonce: consumed by any verification attempt
-      this.nonces.delete(siweMessage.nonce);
-
-      const now = Date.now();
-      if (now - nonceEntry.createdAt > this.NONCE_TTL) {
-        return null; // Nonce expired
+      this.forgetExpiredNonces(now);
+      if (this.used.has(siweMessage.nonce)) {
+        return null;
       }
+      this.used.set(siweMessage.nonce, now + this.NONCE_TTL);
 
       // Issued At must fall between nonce creation and now
       const issuedAt = Date.parse(siweMessage.issuedAt ?? '');
       if (
         Number.isNaN(issuedAt) ||
-        issuedAt < nonceEntry.createdAt - this.CLOCK_SKEW ||
+        issuedAt < createdAt - this.CLOCK_SKEW ||
         issuedAt > now + this.CLOCK_SKEW
       ) {
         return null;
-      }
-
-      if (siweMessage.address.toLowerCase() !== nonceEntry.address) {
-        return null; // Nonce issued to another address
       }
 
       if (
@@ -116,7 +109,7 @@ export class SiweService {
       const fields = await siweMessage.verify({
         signature,
         domain: siweMessage.domain,
-        nonce: nonceEntry.nonce,
+        nonce: siweMessage.nonce,
         time: new Date(now).toISOString(),
       });
 
@@ -129,14 +122,46 @@ export class SiweService {
   }
 
   /**
-   * Clean up expired nonces to prevent memory bloat
+   * Checks a nonce's tag against the address signing with it.
+   * @returns The nonce's issue time, or null if the tag does not match
    */
-  private cleanExpiredNonces(): void {
-    const now = Date.now();
-    for (const [nonce, entry] of this.nonces.entries()) {
-      if (now - entry.createdAt > this.NONCE_TTL) {
-        this.nonces.delete(nonce);
+  private checkNonce(nonce: string, address: string): number | null {
+    if (!NONCE_PATTERN.test(nonce)) {
+      return null;
+    }
+    const bytes = Buffer.from(nonce, 'hex');
+    const issuedAt = bytes.subarray(0, 8);
+    const random = bytes.subarray(8, 8 + RANDOM_BYTES);
+    const tag = bytes.subarray(8 + RANDOM_BYTES);
+    if (!timingSafeEqual(tag, this.tag(issuedAt, random, address))) {
+      return null;
+    }
+    return Number(issuedAt.readBigUInt64BE());
+  }
+
+  // Fixed-length fields first, so the address needs no length prefix
+  private tag(issuedAt: Buffer, random: Buffer, address: string): Buffer {
+    const data = Buffer.concat([
+      issuedAt,
+      random,
+      Buffer.from(address.toLowerCase(), 'utf-8'),
+    ]);
+    const mac = this.keys.isAvailable()
+      ? this.keys.macSiweNonce(data)
+      : createHmac('sha256', this.fallbackKey).update(data).digest();
+    return mac.subarray(0, TAG_BYTES);
+  }
+
+  /**
+   * Entries are inserted with the same lifetime, so the oldest come first
+   * and pruning stops at the first live one.
+   */
+  private forgetExpiredNonces(now: number): void {
+    for (const [nonce, forgetAt] of this.used) {
+      if (forgetAt > now) {
+        return;
       }
+      this.used.delete(nonce);
     }
   }
 }
