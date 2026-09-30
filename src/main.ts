@@ -41,14 +41,16 @@ async function bootstrap() {
   // Global exception filter - sanitizes all error responses
   app.useGlobalFilters(new TeeExceptionFilter());
 
-  // Swagger API documentation setup
-  const config = new DocumentBuilder()
-    .setTitle('Wulong API')
-    .setDescription('API documentation for Wulong')
-    .setVersion('0.1.0')
-    .build();
-  const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('', app, document);
+  // Swagger UI outside production only: public API docs make probing easier
+  if (!isProd) {
+    const config = new DocumentBuilder()
+      .setTitle('Wulong API')
+      .setDescription('API documentation for Wulong')
+      .setVersion('0.3.0')
+      .build();
+    const document = SwaggerModule.createDocument(app, config);
+    SwaggerModule.setup('', app, document);
+  }
 
   // Graceful shutdown handling
   app.enableShutdownHooks();
