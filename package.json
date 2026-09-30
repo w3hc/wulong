@@ -22,6 +22,7 @@
     "test:mlkem": "ts-node scripts/test-mlkem-flow.ts",
     "test:store-access": "ts-node scripts/test-store-and-access.ts",
     "verify:attestation": "ts-node scripts/verify-attestation.ts",
+    "governance:propose-release": "ts-node scripts/governance/propose-release.ts",
     "dance": "pnpm format && pnpm lint:fix && pnpm test && pnpm test:e2e && pnpm build && pnpm outdated || true"
   },
   "dependencies": {
@@ -47,6 +48,7 @@
     "@nestjs/cli": "^12.0.8",
     "@nestjs/schematics": "^12.0.6",
     "@nestjs/testing": "^12.1.1",
+    "@openzeppelin/contracts": "5.6.1",
     "@types/express": "^5.0.6",
     "@types/jest": "^30.0.0",
     "@types/node": "^26.6.3",
@@ -54,6 +56,7 @@
     "eslint": "^10.11.0",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-prettier": "^5.5.6",
+    "forge-std": "github:foundry-rs/forge-std#v1.11.0",
     "globals": "^17.12.0",
     "jest": "^30.5.2",
     "prettier": "^3.9.9",

@@ -124,7 +124,7 @@ A client, before encrypting to Wulong, or an auditor, at any time:
 2. **Code.** Replay the event log into RTMR3 and read the `compose_hash`, `app_id` and `os_image_hash`. Check that `compose_hash` belongs to a published Wulong release whose image digest is reproducible from source, and that `app_id` is Wulong's known `DstackApp` address. Never trust an `app_id` read from the CVM's own `Info`.
 3. **Chain.** For the identity and relayer keys, verify each `GetKey` signature chain per the [v1 spec](https://github.com/Dstack-TEE/dstack/blob/master/docs/guest-api-v1.md#verifying-a-chain), anchored on `DstackKms.kmsInfo().k256Pubkey` read from the chain, not from Wulong.
 4. **Manifest.** Recover the manifest signer and check that it is the identity key from step 3, that `appId` matches, and that `mlkemPublicKeyHash` is `SHA-256(ek)`.
-5. **Governance.** Read the `DstackApp` contract: owner, allowed compose hashes (current and past `ComposeHashAdded` events), upgrade status. See [Upgrade governance](#upgrade-governance).
+5. **Governance.** Read the `DstackApp` contract: owner, allowed compose hashes (current and past `ComposeHashAdded` events), upgrade status. See [Upgrade governance](#upgrade-governance); `pnpm verify:attestation --app <DstackApp>` does it.
 
 Steps 1–2 prove the keys are held by that code now. Steps 3–4 prove they are the app's stable keys under the KMS, so a client can pin `ek` and the relayer address once and re-check only the chain. Step 5 tells the client which code can ever hold them.
 
@@ -149,9 +149,10 @@ Phala Cloud's default (off-chain) KMS does not give this property: its app allow
 
 ## Upgrade governance
 
-The `DstackApp` owner can call `addComposeHash`, so the owner is the real key holder: they can ship a build that prints the keys. This is made visible and slow rather than impossible:
+The `DstackApp` owner can call `addComposeHash`, so the owner is the real key holder: they can ship a build that prints the keys. This is made visible and slow rather than impossible. [GOVERNANCE.md](./GOVERNANCE.md) implements it and has the setup and release runbooks:
 
-- **Owner**: a [Safe](https://safe.global/) multisig behind an OpenZeppelin `TimelockController` (for example a 7-day delay). An upgrade is public on chain from the moment it is scheduled, and users can review it and withdraw their secrets before it can boot.
+- **Owner**: a [Safe](https://safe.global/) multisig behind an OpenZeppelin `TimelockController` (7-day delay), through [`WulongAppOwner`](../contracts/src/WulongAppOwner.sol). An upgrade is public on chain from the moment it is scheduled, and users can review it and withdraw their secrets before it can boot.
+- **Emergency removal**: the Safe, as guardian, can `removeComposeHash` without delay, and nothing else. Additions always wait for the timelock.
 - **Release discipline**: each allowed compose hash pins the image by digest, not a mutable tag, is published with its source commit, and has a reproducible build.
 - **Retire old versions**: `removeComposeHash` the previous version in the same timelock batch. A withdrawn version otherwise stays bootable with the same keys ([dstack#1297](https://github.com/Dstack-TEE/dstack/issues/1297)).
 - **`setRequireTcbUpToDate(true)`** on the `DstackApp`.
@@ -200,7 +201,6 @@ A follow-up issue implements this. Expected shape:
 ## Open questions
 
 - Phala Cloud's availability of dstack 0.6 OS images, needed for `/v1/GetKey`. dstack 0.6.0 was released on 2026-09-28. If it is not available yet, either wait, or start on v0 `getKey(path)` with algorithm-specific paths and accept one planned rotation.
-- Timelock delay: long enough for users to react, short enough for security fixes. An emergency path could remove compose hashes without delay (removal only ever reduces who holds keys), while additions stay timelocked.
 - Whether to self-host a KMS to remove Phala's `DstackKms` ownership from the trust set.
 
 ## Sources

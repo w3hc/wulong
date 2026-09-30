@@ -8,6 +8,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- On-chain governance for Wulong's `DstackApp`: a `WulongAppOwner` contract lets a Safe-controlled `TimelockController` (7-day delay) make any call to the app, so adding a compose hash is always delayed, and lets a guardian remove compose hashes without delay. Foundry project in [`contracts/`](contracts), tested in CI. See [`docs/GOVERNANCE.md`](docs/GOVERNANCE.md) ([#48](https://github.com/w3hc/wulong/issues/48)).
+- `pnpm governance:propose-release`: builds the Safe batch that allows a release's compose hash and removes every other allowed one, after checking its `app-compose.json` embeds this repository's digest-pinned `docker-compose.yml` ([#48](https://github.com/w3hc/wulong/issues/48)).
+- `pnpm verify:attestation --app <DstackApp>` checks the app's governance (timelocked owner, minimum delay, `requireTcbUpToDate`, running compose hash allowed) and lists every compose hash ever allowed and every implementation upgrade ([#48](https://github.com/w3hc/wulong/issues/48)).
+- Release notes carry the source commit and link the governance runbook ([#48](https://github.com/w3hc/wulong/issues/48)).
+
 - Every response takes at least 100 ms plus random jitter, success or error, strips headers that reveal the stack, caches or tracing, and is sent with `Cache-Control: no-store`. Requests lose `User-Agent`, `Referer`, `Accept-Language`, client hints and similar headers before route code sees them. Ported from zk-api, extended to error responses, and keeping the client IP the rate limiter relies on. See [`docs/SIDE_CHANNEL_ATTACKS.md`](docs/SIDE_CHANNEL_ATTACKS.md#what-wulong-does) ([#42](https://github.com/w3hc/wulong/issues/42)).
 - `CORS_ORIGINS`: comma-separated origins of the browser UIs allowed to call the API. Unset allows none; startup fails on an entry that is not an exact origin ([#41](https://github.com/w3hc/wulong/issues/41)).
 

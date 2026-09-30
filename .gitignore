@@ -56,3 +56,7 @@ tmp/
 chest.json
 NOTES.md
 notes/
+# Foundry
+contracts/out/
+contracts/cache/
+contracts/broadcast/*/31337/
