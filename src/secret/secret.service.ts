@@ -5,15 +5,18 @@ import {
   BadRequestException,
   HttpException,
   HttpStatus,
+  Logger,
+  OnModuleInit,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { getBytes, hexlify, isAddress } from 'ethers';
 import * as fs from 'fs';
 import * as path from 'path';
-import { randomBytes } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
 import { TeePlatformService } from '../attestation/tee-platform.service';
 import { buildReportData } from '../attestation/report-data';
 import { KeyDerivationService } from '../keys/key-derivation.service';
+import { RelayerService } from '../relayer/relayer.service';
 import { TeeTlsService } from '../tls/tee-tls.service';
 import { AttestationResponseDto } from './dto/attestation-response.dto';
 import {
@@ -34,23 +37,70 @@ interface SecretData {
 
 /**
  * Secret service for storing and accessing secrets with owner-based access control.
+ *
+ * When the relayer anchors, every write is committed on chain before it
+ * replaces the chest, and the chest is checked against the anchor at boot, so
+ * it cannot be rolled back to an older copy.
  */
 @Injectable()
-export class SecretService {
+export class SecretService implements OnModuleInit {
+  private readonly logger = new Logger(SecretService.name);
   private readonly secretPath: string;
+  private readonly pendingPath: string;
   private readonly maxBytes: number;
   private writeQueue: Promise<unknown> = Promise.resolve();
+  private anchoredSeq = 0n;
 
   constructor(
     private readonly teePlatformService: TeePlatformService,
     private readonly mlkemEncryptionService: MlKemEncryptionService,
     private readonly keys: KeyDerivationService,
     private readonly tls: TeeTlsService,
+    private readonly relayer: RelayerService,
   ) {
     this.secretPath =
       process.env.CHEST_PATH ?? path.join(process.cwd(), 'chest.json');
+    this.pendingPath = `${this.secretPath}.pending`;
     this.maxBytes = Number(
       process.env.CHEST_MAX_BYTES ?? DEFAULT_CHEST_MAX_BYTES,
+    );
+  }
+
+  /**
+   * Checks the chest against the on-chain anchor: it must be the last
+   * anchored version, or the pending one if a crash hit between anchoring and
+   * renaming. A chest that was never anchored is anchored as it is.
+   * @throws Error if the chest does not match the anchor
+   */
+  async onModuleInit(): Promise<void> {
+    const anchor = await this.relayer.getLatestAnchor();
+    if (!anchor) {
+      return;
+    }
+
+    const chest = await readIfExists(this.secretPath);
+    if (anchor.seq === 0n) {
+      if (chest) {
+        await this.relayer.anchorChest(commitment(chest), 1n);
+        this.anchoredSeq = 1n;
+        this.logger.log('Anchored the existing chest for the first time');
+      }
+      return;
+    }
+
+    this.anchoredSeq = anchor.seq;
+    if (chest && commitment(chest) === anchor.root) {
+      await fs.promises.rm(this.pendingPath, { force: true });
+      return;
+    }
+    const pending = await readIfExists(this.pendingPath);
+    if (pending && commitment(pending) === anchor.root) {
+      await fs.promises.rename(this.pendingPath, this.secretPath);
+      this.logger.log('Recovered the anchored chest from its pending write');
+      return;
+    }
+    throw new Error(
+      `The chest does not match anchor ${anchor.seq}: it was rolled back or altered outside the enclave`,
     );
   }
 
@@ -298,9 +348,11 @@ export class SecretService {
   /**
    * Saves the secret data to the JSON file atomically: writes a flushed
    * temp file, then renames it over the chest, so a crash never leaves
-   * a partially written chest behind.
+   * a partially written chest behind. When anchoring, the temp file is
+   * anchored on chain before the rename.
    * @param data The secret data to save
    * @throws HttpException (507) if the chest would exceed CHEST_MAX_BYTES
+   * @throws ServiceUnavailableException if the write cannot be anchored
    */
   private async saveSecret(data: SecretData): Promise<void> {
     const serialized = JSON.stringify(data, null, 2);
@@ -311,12 +363,25 @@ export class SecretService {
       );
     }
 
-    const tmpPath = `${this.secretPath}.tmp`;
+    const anchoring = this.relayer.isEnabled();
+    const tmpPath = anchoring ? this.pendingPath : `${this.secretPath}.tmp`;
     try {
       await fs.promises.writeFile(tmpPath, serialized, {
         encoding: 'utf-8',
         flush: true,
       });
+    } catch (error) {
+      throw new Error(
+        `Failed to save secret: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        { cause: error },
+      );
+    }
+
+    if (anchoring) {
+      await this.anchor(commitment(Buffer.from(serialized, 'utf-8')));
+    }
+
+    try {
       await fs.promises.rename(tmpPath, this.secretPath);
     } catch (error) {
       throw new Error(
@@ -324,5 +389,48 @@ export class SecretService {
         { cause: error },
       );
     }
+  }
+
+  /**
+   * Anchors the pending chest. A failed or timed-out transaction may still
+   * have been included, so the anchor is read back before giving up.
+   */
+  private async anchor(root: string): Promise<void> {
+    const seq = this.anchoredSeq + 1n;
+    try {
+      await this.relayer.anchorChest(root, seq);
+      this.anchoredSeq = seq;
+      return;
+    } catch (error) {
+      const latest = await this.relayer.getLatestAnchor().catch(() => null);
+      if (latest?.root === root) {
+        this.anchoredSeq = latest.seq;
+        return;
+      }
+      if (latest) {
+        this.anchoredSeq = latest.seq;
+      }
+      await fs.promises.rm(this.pendingPath, { force: true });
+      this.logger.error(
+        `Anchoring chest write ${seq} failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      );
+      throw new ServiceUnavailableException('Secret storage is unavailable');
+    }
+  }
+}
+
+/** The on-chain commitment to a version of the chest. */
+function commitment(chest: Buffer): string {
+  return `0x${createHash('sha256').update(chest).digest('hex')}`;
+}
+
+async function readIfExists(file: string): Promise<Buffer | null> {
+  try {
+    return await fs.promises.readFile(file);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return null;
+    }
+    throw error;
   }
 }

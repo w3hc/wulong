@@ -5,10 +5,17 @@ import { AuthModule } from '../auth/auth.module';
 import { AttestationModule } from '../attestation/attestation.module';
 import { MlKemEncryptionService } from '../encryption/mlkem-encryption.service';
 import { KeysModule } from '../keys/keys.module';
+import { RelayerModule } from '../relayer/relayer.module';
 import { TlsModule } from '../tls/tls.module';
 
 @Module({
-  imports: [AttestationModule, AuthModule, KeysModule, TlsModule],
+  imports: [
+    AttestationModule,
+    AuthModule,
+    KeysModule,
+    RelayerModule,
+    TlsModule,
+  ],
   controllers: [SecretController],
   providers: [SecretService, MlKemEncryptionService],
 })
