@@ -10,7 +10,6 @@ describe('Rate limiting (e2e)', () => {
 
   beforeAll(async () => {
     process.env.NODE_ENV = 'test';
-    process.env.KMS_URL = 'http://localhost:3001';
     process.env.THROTTLE_LIMIT = String(limit);
 
     const moduleFixture: TestingModule = await Test.createTestingModule({

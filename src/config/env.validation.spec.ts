@@ -33,50 +33,11 @@ describe('Environment Validation', () => {
       );
     });
 
-    it('should validate valid KMS_URL', () => {
-      const config = {
-        NODE_ENV: 'development',
-        KMS_URL: 'http://localhost:8080',
-      };
-      const result = validateEnvironment(config);
-
-      expect(result.KMS_URL).toBe('http://localhost:8080');
-    });
-
-    it('should validate KMS_URL without TLD requirement', () => {
-      const config = {
-        NODE_ENV: 'development',
-        KMS_URL: 'http://kms-service',
-      };
-      const result = validateEnvironment(config);
-
-      expect(result.KMS_URL).toBe('http://kms-service');
-    });
-
-    it('should allow invalid KMS_URL when skipMissingProperties is true', () => {
-      const config = {
-        NODE_ENV: 'development',
-        KMS_URL: 'not-a-url',
-      };
-
-      // This doesn't throw because skipMissingProperties is true
-      // and the validation is lenient
-      const result = validateEnvironment(config);
-      expect(result).toBeDefined();
-    });
-
     it('should use default NODE_ENV when not provided', () => {
       const config = {};
       const result = validateEnvironment(config);
 
       expect(result.NODE_ENV).toBe('development');
-    });
-
-    it('should allow missing KMS_URL', () => {
-      const config = { NODE_ENV: 'production' };
-      const result = validateEnvironment(config);
-
-      expect(result.KMS_URL).toBeUndefined();
     });
   });
 

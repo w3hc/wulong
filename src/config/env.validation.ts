@@ -4,7 +4,6 @@ import {
   IsIn,
   IsInt,
   IsString,
-  IsUrl,
   Min,
   validateSync,
 } from 'class-validator';
@@ -16,9 +15,6 @@ import {
 export class EnvironmentVariables {
   @IsEnum(['development', 'production', 'test'])
   NODE_ENV: 'development' | 'production' | 'test' = 'development';
-
-  @IsUrl({ require_tld: false })
-  KMS_URL?: string;
 
   // Rate limit window, in milliseconds
   @IsInt()

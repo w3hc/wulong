@@ -4,7 +4,6 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
-import { SecretsService } from './config/secrets.service';
 import { AttestationModule } from './attestation/attestation.module';
 import { HealthController } from './health/health.controller';
 import { validateEnvironment } from './config/env.validation';
@@ -40,12 +39,10 @@ import { RequestSanitizerMiddleware } from './middleware/request-sanitizer.middl
   controllers: [AppController, HealthController],
   providers: [
     AppService,
-    SecretsService,
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_INTERCEPTOR, useClass: TimingProtectionInterceptor },
     { provide: APP_INTERCEPTOR, useClass: MetadataSanitizerInterceptor },
   ],
-  exports: [SecretsService],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {
