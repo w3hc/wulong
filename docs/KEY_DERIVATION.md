@@ -46,7 +46,7 @@ The proof has three independent parts:
 - The key is random, so it lives only in that file. Losing the volume loses every stored secret, and a second instance has a different key.
 - Nothing proves to a third party that the file was never copied out before sealing.
 
-**KMS-held secrets released on attestation** (the `loadFromKms` path in [`secrets.service.ts`](../src/config/secrets.service.ts)). A key someone generated and uploaded to a KMS was known to that someone. Derivation avoids that: the key is a function of a root that is itself generated inside a TEE, and nobody ever handles it.
+**KMS-held secrets released on attestation** (the `loadFromKms` path of the former `SecretsService`, removed in [#44](https://github.com/w3hc/wulong/issues/44)). A key someone generated and uploaded to a KMS was known to that someone. Derivation avoids that: the key is a function of a root that is itself generated inside a TEE, and nobody ever handles it.
 
 ## Derivation
 

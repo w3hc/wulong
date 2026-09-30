@@ -63,8 +63,8 @@ services:
       - /var/run/dstack.sock:/var/run/dstack.sock  # Required for TEE attestation
     environment:
       - NODE_ENV=${NODE_ENV}
-      - KMS_URL=${KMS_URL}
       - CORS_ORIGINS=${CORS_ORIGINS}  # Browser UIs allowed to call the API
+      - SIWE_DOMAIN=${SIWE_DOMAIN}  # UIs allowed to request a SIWE signature
       - TLS_ALT_NAMES=${TLS_ALT_NAMES}  # <APP_ID>-3000s.<CLUSTER>.phala.network
     restart: unless-stopped
 ```
@@ -80,8 +80,12 @@ Create a local file with your production secrets (used during deployment):
 
 ```bash
 NODE_ENV=production
-KMS_URL=http://localhost:8001/prpc/PhactoryAPI.GetRuntimeInfo
+SIWE_DOMAIN=app.example.com
+TLS_ALT_NAMES=<APP_ID>-3000s.<CLUSTER>.phala.network
+CORS_ORIGINS=https://app.example.com
 ```
+
+Startup fails in production if `SIWE_DOMAIN` is missing, or `TLS_ALT_NAMES` unless `ALLOW_TLS_OUTSIDE_ENCLAVE=true`.
 
 **Important**: Add `.env.prod` to [.gitignore](../.gitignore) to prevent committing secrets.
 
@@ -229,10 +233,7 @@ The certificate is signed by the app's dstack KMS CA, not a public CA, so browse
 
 ### API Documentation
 
-The Swagger UI is available at the root path:
-```
-https://<your-endpoint>.phala.network/
-```
+The Swagger UI is not served in production. Run the app locally to browse it, see [LOCAL_SETUP.md](./LOCAL_SETUP.md).
 
 ## Security Architecture
 
@@ -243,19 +244,6 @@ Phala Cloud uses end-to-end encryption for secrets:
 1. **Browser-side encryption**: When you deploy via UI or CLI, secrets are encrypted in your browser
 2. **TEE-only decryption**: Only your application inside the TEE can decrypt the secrets
 3. **No provider access**: Phala Cloud cannot access your decrypted secrets
-
-From [src/config/secrets.service.ts](../src/config/secrets.service.ts:25):
-```typescript
-// In production, check if secrets are injected as environment variables (Phala Cloud)
-// or if we need to fetch from external KMS
-if (process.env.KMS_URL) {
-  await this.loadFromKms();
-} else {
-  // Load from environment (encrypted secrets in TEE)
-  this.logger.log('Loading secrets from TEE environment variables');
-  // ...
-}
-```
 
 ### ML-KEM Encryption
 
@@ -321,7 +309,7 @@ docker logs dstack-wulong-1
 Common issues:
 - **exec format error**: Wrong architecture (must be AMD64, not ARM64)
 - **Missing secrets**: Environment variables not properly configured
-- **KMS errors**: Check KMS_URL or secret loading logic
+- **Environment validation failed**: a setting required in production is missing, the message names it
 
 ### "exec format error"
 

@@ -13,12 +13,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Production startup fails fast when `SIWE_DOMAIN` is missing, or `TLS_ALT_NAMES` unless `ALLOW_TLS_OUTSIDE_ENCLAVE=true`, naming the missing setting. Env validation no longer skips missing properties. `docker-compose.yml` passes `SIWE_DOMAIN`, which changes its hash ([#44](https://github.com/w3hc/wulong/issues/44)).
+- `GET /health/ready` answers `503` until the keys are derived; it always answered ready ([#44](https://github.com/w3hc/wulong/issues/44)).
+- Swagger UI is served only outside production ([#44](https://github.com/w3hc/wulong/issues/44)).
+- The production logger redacts secret-named env values, PEM private keys and long hex or base64 strings from everything it emits ([#44](https://github.com/w3hc/wulong/issues/44)).
 - ML-KEM payloads carry `version: 2`: each recipient's AES key is wrapped with AES-KW under a key-encryption key derived from the ML-KEM shared secret with HKDF-SHA256 (info `w3pk-mlkem-kek-v2`), so a tampered wrapped key fails at unwrap. Recipient ciphertexts are 1608 bytes. Payloads without a `version` are legacy v1 (XOR-wrapped key) and still decrypt, so stored secrets stay readable. Matches [w3pk#133](https://github.com/w3hc/w3pk/issues/133) ([#43](https://github.com/w3hc/wulong/issues/43)).
 - Decryption requires a 12-byte IV and a 16-byte auth tag; truncated tags were accepted ([#43](https://github.com/w3hc/wulong/issues/43)).
 - The ML-KEM test scripts and [`docs/CLIENT_ENCRYPTION.md`](docs/CLIENT_ENCRYPTION.md) produce v2 payloads ([#43](https://github.com/w3hc/wulong/issues/43)).
 
 ### Removed
 
+- `SecretsService` and `KMS_URL`. Nothing read the service, yet with `KMS_URL` set it POSTed an attestation to that URL and aborted startup on a non-200, and otherwise copied all of `process.env` into a map ([#44](https://github.com/w3hc/wulong/issues/44)).
 - The unused legacy single-recipient `encrypt` and `decrypt` methods of the ML-KEM service, which used the raw shared secret as the AES key ([#43](https://github.com/w3hc/wulong/issues/43)).
 
 ### Fixed

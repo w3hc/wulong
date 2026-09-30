@@ -5,7 +5,7 @@ This guide walks you through manually testing the `store` and `access` endpoints
 ## Prerequisites
 
 - Development server running: `npm run start:dev`
-- Swagger UI available at: https://localhost:3000
+- Swagger UI available at: https://localhost:3000 (not served in production)
 - Node.js installed (for generating SIWE headers)
 
 ## Test Wallet

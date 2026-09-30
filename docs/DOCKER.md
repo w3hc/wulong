@@ -35,7 +35,7 @@ Development mode uses hot reload and mounts your local code as a volume for live
    The dev compose file has sensible defaults, but you can override in `.env`:
    ```bash
    NODE_ENV=development
-   KMS_URL=http://localhost:8001/prpc/PhactoryAPI.GetRuntimeInfo
+   DSTACK_SIMULATOR_ENDPOINT=http://host.docker.internal:8090
    ```
 
 2. **Start development container**:
@@ -83,7 +83,8 @@ Production mode uses a multi-stage build to create an optimized image.
    Configure production settings:
    ```bash
    NODE_ENV=production
-   KMS_URL=https://your-kms.example.com/release
+   SIWE_DOMAIN=app.example.com
+   TLS_ALT_NAMES=<app-id>-3000s.<gateway-domain>
    ```
 
    No keys go in this file: the ML-KEM keys are derived inside the enclave from the dstack KMS, and startup fails if key material is found in env (see [KEY_DERIVATION.md](./KEY_DERIVATION.md)).
@@ -204,7 +205,9 @@ A fresh volume needs nothing: Docker copies the image's `/app/data`, already own
 Both modes use the following environment variables (configured in `docker-compose.yml` and `docker-compose.dev.yml`):
 
 - `NODE_ENV`: Set to `development` or `production`
-- `KMS_URL`: KMS service endpoint (default: `http://localhost:8001/prpc/PhactoryAPI.GetRuntimeInfo`)
+- `SIWE_DOMAIN`: UIs allowed to request a SIWE signature, required in production
+- `TLS_ALT_NAMES`: gateway hostnames of the in-enclave TLS certificate, required in production unless `ALLOW_TLS_OUTSIDE_ENCLAVE=true`
+- `CORS_ORIGINS`: browser origins allowed to call the API
 
 To modify these, edit the respective `docker-compose` file before running.
 
@@ -235,7 +238,7 @@ services:
       - "3000:3000"
     environment:
       - NODE_ENV=development
-      - KMS_URL=http://localhost:8001/prpc/PhactoryAPI.GetRuntimeInfo
+      - DSTACK_SIMULATOR_ENDPOINT=${DSTACK_SIMULATOR_ENDPOINT}
     volumes:
       - .:/app
       - /app/node_modules
@@ -258,7 +261,9 @@ services:
       - /var/run/dstack.sock:/var/run/dstack.sock  # Required for TEE attestation on Phala
     environment:
       - NODE_ENV=${NODE_ENV}
-      - KMS_URL=${KMS_URL}
+      - CORS_ORIGINS=${CORS_ORIGINS}
+      - SIWE_DOMAIN=${SIWE_DOMAIN}
+      - TLS_ALT_NAMES=${TLS_ALT_NAMES}
     restart: unless-stopped
 ```
 
