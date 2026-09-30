@@ -1,4 +1,4 @@
-import { createHash, hkdfSync } from 'crypto';
+import { createHash, createHmac, hkdfSync } from 'crypto';
 import {
   SigningKey,
   Transaction,
@@ -14,6 +14,7 @@ import {
   KeyAlgorithm,
 } from './dstack-v1.client';
 import {
+  CHEST_MAC_DOMAIN,
   KEY_MANIFEST_DOMAIN,
   KEY_MANIFEST_TYPES,
   KeyDerivationService,
@@ -229,6 +230,36 @@ describe('KeyDerivationService', () => {
       );
 
       expect(hex(service.decapsulate(ciphertext))).toBe(hex(sharedSecret));
+    });
+
+    it('macs chest entries under a key derived from its own GetKey domain', async () => {
+      const service = await create();
+      const { key } = await dstack.getKey(CHEST_MAC_DOMAIN, 'ed25519');
+      const macKey = hkdfSync(
+        'sha256',
+        key,
+        'wulong',
+        lp('wulong-chest-mac-v1'),
+        32,
+      );
+      const data = Buffer.from('entry');
+
+      expect(service.macChestEntry(data).toString('hex')).toBe(
+        createHmac('sha256', Buffer.from(macKey)).update(data).digest('hex'),
+      );
+      expect(hex(service.macChestEntry(data))).toBe(
+        hex((await create()).macChestEntry(data)),
+      );
+    });
+
+    it('refuses to mac without keys', () => {
+      const service = new KeyDerivationService(
+        dstack as unknown as DstackV1Client,
+      );
+
+      expect(() => service.macChestEntry(Buffer.from('entry'))).toThrow(
+        'Chest MAC key not derived',
+      );
     });
 
     it('signs a key manifest recoverable to the identity address', async () => {

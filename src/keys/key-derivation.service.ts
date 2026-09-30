@@ -1,4 +1,4 @@
-import { hkdfSync } from 'crypto';
+import { createHmac, hkdfSync } from 'crypto';
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import {
   SigningKey,
@@ -16,9 +16,11 @@ import { DstackV1Client } from './dstack-v1.client';
 export const MLKEM_DOMAIN = 'wulong/mlkem-1024/v1';
 export const IDENTITY_DOMAIN = 'wulong/identity/v1';
 export const RELAYER_DOMAIN = 'wulong/relayer/evm/v1';
+export const CHEST_MAC_DOMAIN = 'wulong/chest-mac/v1';
 
 const MLKEM_SEED_SALT = 'wulong';
 const MLKEM_SEED_INFO = lengthPrefixed('wulong-mlkem-1024-seed-v1');
+const CHEST_MAC_INFO = lengthPrefixed('wulong-chest-mac-v1');
 
 export const KEY_MANIFEST_DOMAIN = { name: 'Wulong', version: '1' };
 export const KEY_MANIFEST_TYPES = {
@@ -51,7 +53,7 @@ type MlKem = Awaited<ReturnType<typeof createMlKem1024>>;
  * are never generated elsewhere, stored or passed through env, and every
  * instance of the same app gets the same keys. Private keys never leave this
  * service: callers get public keys, decapsulation, manifest signatures and
- * relayer transaction signatures.
+ * relayer transaction signatures and chest entry MACs.
  *
  * See docs/KEY_DERIVATION.md.
  */
@@ -66,6 +68,7 @@ export class KeyDerivationService implements OnModuleInit {
   private relayer: SigningKey | null = null;
   private relayerSignatureChain: Uint8Array[] = [];
   private keyManifest: SignedKeyManifest | null = null;
+  private chestMacKey: Buffer | null = null;
 
   constructor(private readonly dstack: DstackV1Client) {}
 
@@ -122,6 +125,12 @@ export class KeyDerivationService implements OnModuleInit {
     const relayerKey = new SigningKey(hexlify(relayer.key));
     relayer.key.fill(0);
 
+    const chestMac = await this.dstack.getKey(CHEST_MAC_DOMAIN, 'ed25519');
+    const chestMacKey = Buffer.from(
+      hkdfSync('sha256', chestMac.key, MLKEM_SEED_SALT, CHEST_MAC_INFO, 32),
+    );
+    chestMac.key.fill(0);
+
     const appId = await this.dstack.getAppId();
 
     this.mlkem = mlkem;
@@ -131,11 +140,16 @@ export class KeyDerivationService implements OnModuleInit {
     this.identitySignatureChain = identity.signatureChain;
     this.relayer = relayerKey;
     this.relayerSignatureChain = relayer.signatureChain;
+    this.chestMacKey = chestMacKey;
     this.keyManifest = this.signKeyManifest(appId);
   }
 
   isAvailable(): boolean {
-    return this.mlkemSecretKey !== null && this.identity !== null;
+    return (
+      this.mlkemSecretKey !== null &&
+      this.identity !== null &&
+      this.chestMacKey !== null
+    );
   }
 
   getMlKemPublicKey(): Uint8Array | null {
@@ -147,6 +161,17 @@ export class KeyDerivationService implements OnModuleInit {
       throw new Error('ML-KEM keys not derived');
     }
     return this.mlkem.decap(ciphertext, this.mlkemSecretKey);
+  }
+
+  /**
+   * HMAC-SHA256 under the chest MAC key, which authenticates chest entries
+   * so the access list on disk cannot be altered outside the enclave.
+   */
+  macChestEntry(data: Uint8Array): Buffer {
+    if (!this.chestMacKey) {
+      throw new Error('Chest MAC key not derived');
+    }
+    return createHmac('sha256', this.chestMacKey).update(data).digest();
   }
 
   getIdentityAddress(): string | null {
