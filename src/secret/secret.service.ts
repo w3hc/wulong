@@ -7,6 +7,7 @@ import {
   HttpStatus,
   Logger,
   OnModuleInit,
+  PayloadTooLargeException,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { getBytes, hexlify, isAddress } from 'ethers';
@@ -27,16 +28,20 @@ import {
   WRAPPED_KEY_LENGTH,
 } from '../encryption/mlkem-encryption.service';
 
-const CHEST_ENTRY_VERSION = 2;
+const CHEST_ENTRY_VERSION = 3;
+// Entries stored before owners were recorded: still readable, owned by none
+const LEGACY_CHEST_ENTRY_VERSION = 2;
 
 interface SecretEntry {
-  version: typeof CHEST_ENTRY_VERSION;
+  version: typeof CHEST_ENTRY_VERSION | typeof LEGACY_CHEST_ENTRY_VERSION;
   encryptedPayload: MultiRecipientEncryptedPayload; // Multi-recipient encrypted data
   publicAddresses: string[]; // Authorized SIWE addresses
-  mac: string; // Hex HMAC binding the slot, payload and addresses (see entryMac)
+  owner?: string; // Lowercase address that stored the entry, from version 3
+  mac: string; // Hex HMAC binding the slot, payload, addresses and owner (see entryMac)
 }
 
 const DEFAULT_CHEST_MAX_BYTES = 50 * 1024 * 1024;
+const DEFAULT_CHEST_ADDRESS_QUOTA_BYTES = 1024 * 1024;
 const SLOT_PATTERN = /^[0-9a-f]{64}$/;
 
 interface SecretData {
@@ -59,7 +64,11 @@ export class SecretService implements OnModuleInit {
   private readonly secretPath: string;
   private readonly pendingPath: string;
   private readonly maxBytes: number;
+  private readonly quotaBytes: number;
   private writeQueue: Promise<unknown> = Promise.resolve();
+  private chest: Promise<SecretData> | null = null;
+  // Bytes of authentic entries charged to each owner, kept with the chest
+  private usage = new Map<string, number>();
   private anchoredSeq = 0n;
 
   constructor(
@@ -74,6 +83,10 @@ export class SecretService implements OnModuleInit {
     this.pendingPath = `${this.secretPath}.pending`;
     this.maxBytes = Number(
       process.env.CHEST_MAX_BYTES ?? DEFAULT_CHEST_MAX_BYTES,
+    );
+    this.quotaBytes = Number(
+      process.env.CHEST_ADDRESS_QUOTA_BYTES ??
+        DEFAULT_CHEST_ADDRESS_QUOTA_BYTES,
     );
   }
 
@@ -133,7 +146,7 @@ export class SecretService implements OnModuleInit {
     if (!this.mlkemEncryptionService.isAvailable()) {
       return;
     }
-    const secretData = await this.loadSecret();
+    const secretData = await this.getChest();
     const rejected = Object.entries(secretData).filter(
       ([slot, entry]) => !this.isAuthentic(slot, entry),
     ).length;
@@ -152,6 +165,8 @@ export class SecretService implements OnModuleInit {
    * @returns The slot identifier
    * @throws BadRequestException if payload or addresses are invalid
    * @throws ForbiddenException if caller is not among publicAddresses
+   * @throws PayloadTooLargeException if the caller's entries would exceed
+   * CHEST_ADDRESS_QUOTA_BYTES
    */
   async store(
     encryptedPayload: MultiRecipientEncryptedPayload,
@@ -244,13 +259,17 @@ export class SecretService implements OnModuleInit {
     const slot = this.generateSlot();
 
     // Serialize read-modify-write so concurrent stores don't overwrite each other
+    const owner = callerAddress.toLowerCase();
+    const entry = this.seal(slot, encryptedPayload, normalizedAddresses, owner);
     await this.withWriteLock(async () => {
-      const secretData = await this.loadSecret();
-
-      // Store the entry (encrypted at rest - quantum-safe!)
-      secretData[slot] = this.seal(slot, encryptedPayload, normalizedAddresses);
-
-      await this.saveSecret(secretData);
+      await this.getChest();
+      const used = this.usage.get(owner) ?? 0;
+      if (used + entrySize(entry) > this.quotaBytes) {
+        throw new PayloadTooLargeException(
+          'Chest quota exceeded for this address',
+        );
+      }
+      await this.commit({ [slot]: entry });
     });
 
     return slot;
@@ -284,8 +303,7 @@ export class SecretService implements OnModuleInit {
       );
     }
 
-    // Load secret data
-    const secretData = await this.loadSecret();
+    const secretData = await this.getChest();
 
     // A slot the caller does not own answers like one that does not exist,
     // so callers cannot probe which slots are in use. An entry that fails
@@ -309,6 +327,44 @@ export class SecretService implements OnModuleInit {
     } catch {
       throw new BadRequestException('Failed to decrypt secret');
     }
+  }
+
+  /**
+   * Deletes a secret stored by the caller and frees their quota. An entry
+   * stored before owners were recorded can be deleted by any of its
+   * addresses.
+   * @param slot The slot identifier
+   * @param callerAddress The address of the caller (from SIWE authentication)
+   * @throws NotFoundException if slot is malformed, doesn't exist, fails
+   * authentication or the caller cannot delete it
+   * @throws BadRequestException if the caller address is invalid
+   */
+  async remove(slot: string, callerAddress: string): Promise<void> {
+    if (typeof slot !== 'string' || !SLOT_PATTERN.test(slot)) {
+      throw new NotFoundException('Slot not found');
+    }
+
+    if (!callerAddress || !isAddress(callerAddress)) {
+      throw new BadRequestException('Invalid caller address');
+    }
+
+    const caller = callerAddress.toLowerCase();
+    await this.withWriteLock(async () => {
+      const secretData = await this.getChest();
+      // Answers like access, so callers cannot probe which slots are in use
+      const entry: unknown = Object.hasOwn(secretData, slot)
+        ? secretData[slot]
+        : undefined;
+      if (
+        !this.isAuthentic(slot, entry) ||
+        (entry.owner === undefined
+          ? !entry.publicAddresses.includes(caller)
+          : entry.owner !== caller)
+      ) {
+        throw new NotFoundException('Slot not found');
+      }
+      await this.commit({ [slot]: null });
+    });
   }
 
   /**
@@ -377,12 +433,13 @@ export class SecretService implements OnModuleInit {
 
   /**
    * Builds a chest entry holding only the payload's known fields, with its
-   * MAC.
+   * owner and MAC.
    */
   private seal(
     slot: string,
     payload: MultiRecipientEncryptedPayload,
     publicAddresses: string[],
+    owner: string,
   ): SecretEntry {
     const encryptedPayload: MultiRecipientEncryptedPayload = {
       ...(payload.version === undefined ? {} : { version: payload.version }),
@@ -394,35 +451,37 @@ export class SecretService implements OnModuleInit {
       iv: payload.iv,
       authTag: payload.authTag,
     };
-    return {
+    const entry: Omit<SecretEntry, 'mac'> = {
       version: CHEST_ENTRY_VERSION,
       encryptedPayload,
       publicAddresses,
-      mac: this.entryMac(slot, encryptedPayload, publicAddresses).toString(
-        'hex',
-      ),
+      owner,
     };
+    return { ...entry, mac: this.entryMac(slot, entry).toString('hex') };
   }
 
   /**
-   * Checks an entry read from disk: it must be a current version entry whose
-   * MAC matches its slot, payload and addresses. Malformed entries fail.
+   * Checks an entry read from disk: it must be a current or legacy version
+   * entry whose MAC matches its slot, payload, addresses and, from version
+   * 3, owner. Malformed entries fail.
    */
   private isAuthentic(slot: string, entry: unknown): entry is SecretEntry {
     try {
       const candidate = entry as SecretEntry;
       if (
-        candidate?.version !== CHEST_ENTRY_VERSION ||
+        (candidate?.version !== CHEST_ENTRY_VERSION ||
+          typeof candidate.owner !== 'string') &&
+        candidate?.version !== LEGACY_CHEST_ENTRY_VERSION
+      ) {
+        return false;
+      }
+      if (
         typeof candidate.mac !== 'string' ||
         !Array.isArray(candidate.publicAddresses)
       ) {
         return false;
       }
-      const expected = this.entryMac(
-        slot,
-        candidate.encryptedPayload,
-        candidate.publicAddresses,
-      );
+      const expected = this.entryMac(slot, candidate);
       const actual = Buffer.from(candidate.mac, 'hex');
       return (
         actual.length === expected.length && timingSafeEqual(actual, expected)
@@ -434,26 +493,29 @@ export class SecretService implements OnModuleInit {
 
   /**
    * MACs the fixed-order JSON encoding of everything that decides who can
-   * decrypt what: the entry version, the slot, every payload field and the
-   * addresses. Changing it makes every stored entry unreadable.
+   * decrypt, delete or be charged for what: the entry version, the slot,
+   * every payload field, the addresses and, from version 3, the owner.
+   * Changing it makes every stored entry unreadable.
    */
-  private entryMac(
-    slot: string,
-    payload: MultiRecipientEncryptedPayload,
-    publicAddresses: string[],
-  ): Buffer {
-    const encoded = JSON.stringify([
+  private entryMac(slot: string, entry: Omit<SecretEntry, 'mac'>): Buffer {
+    const payload = entry.encryptedPayload;
+    const fields: unknown[] = [
       'wulong-chest-entry',
-      CHEST_ENTRY_VERSION,
+      entry.version,
       slot,
       payload.version ?? 1,
       payload.recipients.map((r) => [r.publicKey, r.ciphertext]),
       payload.encryptedData,
       payload.iv,
       payload.authTag,
-      publicAddresses,
-    ]);
-    return this.keys.macChestEntry(Buffer.from(encoded, 'utf-8'));
+      entry.publicAddresses,
+    ];
+    if (entry.version === CHEST_ENTRY_VERSION) {
+      fields.push(entry.owner);
+    }
+    return this.keys.macChestEntry(
+      Buffer.from(JSON.stringify(fields), 'utf-8'),
+    );
   }
 
   /**
@@ -473,6 +535,71 @@ export class SecretService implements OnModuleInit {
     const run = this.writeQueue.then(fn, fn);
     this.writeQueue = run.catch(() => undefined);
     return run;
+  }
+
+  /**
+   * Returns the in-memory chest, reading the file the first time only. A
+   * failed read is retried on the next call.
+   */
+  private getChest(): Promise<SecretData> {
+    this.chest ??= this.loadSecret().then(
+      (data) => {
+        this.usage = new Map();
+        for (const [slot, entry] of Object.entries(data)) {
+          this.charge(slot, entry, 1);
+        }
+        return data;
+      },
+      (error: unknown) => {
+        this.chest = null;
+        throw error;
+      },
+    );
+    return this.chest;
+  }
+
+  /**
+   * Writes the chest with `changes` applied, then makes it the in-memory
+   * chest, so a failed write leaves memory as it was. A `null` change
+   * removes its slot. Must run under the write lock.
+   * @param changes The entries to set or remove, by slot
+   */
+  private async commit(changes: Record<string, SecretEntry | null>) {
+    const current = await this.getChest();
+    const next: SecretData = { ...current };
+    for (const [slot, entry] of Object.entries(changes)) {
+      if (entry) {
+        next[slot] = entry;
+      } else {
+        delete next[slot];
+      }
+    }
+    await this.saveSecret(next);
+    for (const [slot, entry] of Object.entries(changes)) {
+      if (Object.hasOwn(current, slot)) {
+        this.charge(slot, current[slot], -1);
+      }
+      if (entry) {
+        this.charge(slot, entry, 1);
+      }
+    }
+    this.chest = Promise.resolve(next);
+  }
+
+  /**
+   * Adds an entry's size to its owner's usage, or removes it. Entries
+   * without an owner or failing authentication are charged to nobody.
+   */
+  private charge(slot: string, entry: unknown, sign: 1 | -1): void {
+    if (!this.isAuthentic(slot, entry) || entry.owner === undefined) {
+      return;
+    }
+    const used = (this.usage.get(entry.owner) ?? 0) + sign * entrySize(entry);
+    if (used > 0) {
+      this.usage.set(entry.owner, used);
+    } else {
+      this.usage.delete(entry.owner);
+    }
   }
 
   /**
@@ -570,6 +697,11 @@ export class SecretService implements OnModuleInit {
       throw new ServiceUnavailableException('Secret storage is unavailable');
     }
   }
+}
+
+/** The bytes an entry is charged to its owner's quota. */
+function entrySize(entry: SecretEntry): number {
+  return Buffer.byteLength(JSON.stringify(entry), 'utf-8');
 }
 
 /** The on-chain commitment to a version of the chest. */

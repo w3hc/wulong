@@ -2,6 +2,9 @@ import {
   Controller,
   Post,
   Get,
+  Delete,
+  HttpCode,
+  HttpStatus,
   Header,
   Param,
   Body,
@@ -133,6 +136,47 @@ export class SecretController {
   ): Promise<AccessResponseDto> {
     const secret = await this.secretService.access(slot, req.user.address);
     return { secret };
+  }
+
+  @Delete(':slot')
+  @UseGuards(SiweGuard)
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiSecurity('SIWE')
+  @ApiOperation({
+    summary: 'Delete a secret',
+    description:
+      'Deletes a secret stored by the authenticated caller and frees their storage quota. ' +
+      'A secret stored before owners were recorded can be deleted by any of its publicAddresses. ' +
+      'Requires SIWE authentication via X-SIWE-Message and X-SIWE-Signature headers.',
+  })
+  @ApiHeader({
+    name: 'x-siwe-message',
+    description: 'The SIWE message string (base64 encoded)',
+    required: true,
+  })
+  @ApiHeader({
+    name: 'x-siwe-signature',
+    description: 'The signature hex string',
+    required: true,
+  })
+  @ApiResponse({
+    status: 204,
+    description: 'Secret deleted',
+  })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized - missing or invalid SIWE authentication',
+  })
+  @ApiResponse({
+    status: 404,
+    description:
+      'Not found - slot is not 64 lowercase hex characters, does not exist, fails authentication, or caller did not store it',
+  })
+  async remove(
+    @Param('slot') slot: string,
+    @Req() req: { user: { address: string } },
+  ): Promise<void> {
+    await this.secretService.remove(slot, req.user.address);
   }
 
   @Get('attestation')

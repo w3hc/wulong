@@ -43,6 +43,12 @@ export class EnvironmentVariables {
   @Min(1)
   CHEST_MAX_BYTES?: number;
 
+  // Bytes of chest entries each address may store, defaults to 1 MiB
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  CHEST_ADDRESS_QUOTA_BYTES?: number;
+
   // Gateway hostnames the in-enclave TLS certificate is issued for, comma-separated
   @IsOptional()
   @IsString()

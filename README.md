@@ -102,17 +102,18 @@ Authentication travels in the `X-SIWE-Message` and `X-SIWE-Signature` headers, n
 
 ## Storage
 
-Secrets are stored, encrypted, in a single JSON file. Writes are serialized within the process and saved atomically (temp file, then rename). With `WULONG_ANCHOR_ADDRESS` set, each write is anchored on chain by the enclave's relayer wallet before it replaces the chest, and startup fails on a chest that does not match the anchor, so it cannot be rolled back. See [docs/KEY_DERIVATION.md](docs/KEY_DERIVATION.md#anchoring-the-chest).
+Secrets are stored, encrypted, in a single JSON file, read once and kept in memory. Writes are serialized within the process and saved atomically (temp file, then rename) before memory is updated. With `WULONG_ANCHOR_ADDRESS` set, each write is anchored on chain by the enclave's relayer wallet before it replaces the chest, and startup fails on a chest that does not match the anchor, so it cannot be rolled back. See [docs/KEY_DERIVATION.md](docs/KEY_DERIVATION.md#anchoring-the-chest).
 
 | Setting | Default | Env var |
 | --- | --- | --- |
 | Chest file | `<cwd>/chest.json` | `CHEST_PATH` |
 | Maximum chest size | 50 MB | `CHEST_MAX_BYTES` (bytes) |
+| Storage per address | 1 MiB | `CHEST_ADDRESS_QUOTA_BYTES` (bytes) |
 | Chest anchor contract | unset (no rollback protection) | `WULONG_ANCHOR_ADDRESS` |
 | Base RPC endpoint | required with an anchor | `BASE_RPC_URL` |
 | Relayer balance cap | 0.01 ETH | `RELAYER_MAX_BALANCE_WEI` (wei) |
 
-`docker-compose.yml` keeps the chest at `/app/data/chest.json` on the `wulong-data` named volume, so it survives redeploys. A store that would push the chest past the cap is rejected with `507 Insufficient Storage`. The lock is per process: run a single replica.
+`docker-compose.yml` keeps the chest at `/app/data/chest.json` on the `wulong-data` named volume, so it survives redeploys. A store that would push the chest past the cap is rejected with `507 Insufficient Storage`, and one that would push the caller's own entries past their quota with `413 Payload Too Large`. `DELETE /chest/:slot` removes an entry the caller stored and frees their quota. The quota is per SIWE address, and addresses are free, so the cap remains the ceiling. The lock is per process: run a single replica.
 
 ## Docs
 
