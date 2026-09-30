@@ -19,6 +19,9 @@ pnpm verify:attestation https://your-wulong.phala.network/chest/attestation
 # Or verify saved attestation
 pnpm verify:attestation attestation.json
 
+# Also check the DstackApp's on-chain governance (BASE_RPC_URL or --rpc, default https://mainnet.base.org)
+pnpm verify:attestation <url-or-file> --app <DstackApp> --from-block <app creation block> [--min-delay <seconds>]
+
 # Full path
 pnpm ts-node scripts/verify-attestation.ts <url-or-file>
 ```
@@ -31,6 +34,7 @@ pnpm ts-node scripts/verify-attestation.ts <url-or-file>
 ✅ Certificate chain is present
 ✅ Timestamp is fresh (< 5 minutes)
 ✅ MRTD and RTMR0–3 read from the quote match the returned `measurements`
+✅ With `--app`: the key manifest names that app, a `WulongAppOwner` behind a timelock of at least `--min-delay` (7 days) owns it, `requireTcbUpToDate` is set, the running compose hash is allowed, and every compose hash ever allowed is listed (see [GOVERNANCE.md](../docs/GOVERNANCE.md#verifying))
 
 **What it does NOT verify** (requires Intel DCAP or Phala verification service):
 
@@ -143,6 +147,18 @@ const { valid, tcb_status } = await response.json();
 ```
 
 See: https://docs.phala.com/phala-cloud/attestation/verify-your-application
+
+---
+
+## Governance
+
+### `governance/propose-release.ts`
+
+Builds the timelock batch that allows a release on the `DstackApp`: it adds the compose hash of the given `app-compose.json` and removes every other allowed one. It writes Safe Transaction Builder files to schedule it, then execute it after the delay. See [GOVERNANCE.md](../docs/GOVERNANCE.md#releases).
+
+```bash
+pnpm governance:propose-release app-compose.json --app <DstackApp> --from-block <n> [--rpc <url>] [--out <dir>]
+```
 
 ---
 

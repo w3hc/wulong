@@ -131,6 +131,7 @@ Secrets are stored, encrypted, in a single JSON file. Writes are serialized with
 
 - [**Overview**](docs/OVERVIEW.md) - Project overview, architecture, and security model
 - [**TEE Setup**](docs/TEE_SETUP.md) - dstack attestation, fail-closed startup, and how to reproduce the measurements
+- [**Governance**](docs/GOVERNANCE.md) - Who can allow new builds to derive the keys: Safe, timelock, releases and emergency removal
 - [**Side Channel Attacks**](docs/SIDE_CHANNEL_ATTACKS.md) - Security considerations and mitigations
 - [**Implementation Plan**](docs/MLKEM_IMPLEMENTATION_PLAN.md) - ML-KEM development roadmap
 
