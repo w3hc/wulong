@@ -69,6 +69,9 @@ importers:
       '@nestjs/testing':
         specifier: ^12.1.1
         version: 12.1.1(@nestjs/common@12.1.1(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@12.1.1)(@nestjs/platform-express@12.1.1)
+      '@openzeppelin/contracts':
+        specifier: 5.6.1
+        version: 5.6.1
       '@types/express':
         specifier: ^5.0.6
         version: 5.0.6
@@ -90,6 +93,9 @@ importers:
       eslint-plugin-prettier:
         specifier: ^5.5.6
         version: 5.5.6(@types/eslint@9.6.1)(eslint-config-prettier@10.1.8(eslint@10.11.0))(eslint@10.11.0)(prettier@3.9.9)
+      forge-std:
+        specifier: github:foundry-rs/forge-std#v1.11.0
+        version: https://codeload.github.com/foundry-rs/forge-std/tar.gz/8e40513d678f392f398620b3ef2b418648b33e89
       globals:
         specifier: ^17.12.0
         version: 17.12.0
@@ -824,6 +830,9 @@ packages:
   '@noble/hashes@1.8.0':
     resolution: {integrity: sha512-jCs9ldd7NwzpgXDIf6P3+NrHh9/sD6CQdxHyjQI+h/6rDNo88ypBxxz45UDuZHz9r3tNz7N/VInSVoVdtXEI4A==}
     engines: {node: ^14.21.3 || >=16}
+
+  '@openzeppelin/contracts@5.6.1':
+    resolution: {integrity: sha512-Ly6SlsVJ3mj+b18W3R8gNufB7dTICT105fJhodGAGgyC2oqnBAhqSiNDJ8V8DLY05cCz81GLI0CU5vNYA1EC/w==}
 
   '@paralleldrive/cuid2@2.3.1':
     resolution: {integrity: sha512-XO7cAxhnTZl0Yggq6jOgjiOHhbgcO4NqFqwSmQpjK3b6TEE6Uj/jfSk6wzYyemh3+I0sHirKSetjQwn5cZktFw==}
@@ -1951,6 +1960,10 @@ packages:
   foreground-child@3.3.1:
     resolution: {integrity: sha512-gIXjKqtFuWEgzFRJA9WCQeSJLZDjgJUOMCMzxtvFq/37KojM1BFGufqsCy0r4qSQmYLsZYMeyRqzIWOMup03sw==}
     engines: {node: '>=14'}
+
+  forge-std@https://codeload.github.com/foundry-rs/forge-std/tar.gz/8e40513d678f392f398620b3ef2b418648b33e89:
+    resolution: {tarball: https://codeload.github.com/foundry-rs/forge-std/tar.gz/8e40513d678f392f398620b3ef2b418648b33e89}
+    version: 1.11.0
 
   fork-ts-checker-webpack-plugin@9.1.0:
     resolution: {integrity: sha512-mpafl89VFPJmhnJ1ssH+8wmM2b50n+Rew5x42NeI2U78aRWgtkEtGmctp7iT16UjquJTjorEmIfESj3DxdW84Q==}
@@ -4086,6 +4099,8 @@ snapshots:
 
   '@noble/hashes@1.8.0': {}
 
+  '@openzeppelin/contracts@5.6.1': {}
+
   '@paralleldrive/cuid2@2.3.1':
     dependencies:
       '@noble/hashes': 1.8.0
@@ -5256,6 +5271,8 @@ snapshots:
     dependencies:
       cross-spawn: 7.0.6
       signal-exit: 4.1.0
+
+  forge-std@https://codeload.github.com/foundry-rs/forge-std/tar.gz/8e40513d678f392f398620b3ef2b418648b33e89: {}
 
   fork-ts-checker-webpack-plugin@9.1.0(typescript@6.0.3)(webpack@5.104.1):
     dependencies:
