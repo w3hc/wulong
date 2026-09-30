@@ -75,3 +75,39 @@ jobs:
           echo "First build:  $first"
           echo "Second build: $second"
           [ "$first" = "$second" ]
+
+  contracts:
+    name: Check and test the governance contracts
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: contracts
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+          cache: pnpm
+
+      # OpenZeppelin and forge-std come from node_modules, pinned by the lockfile
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Setup Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.5.1
+
+      - name: Check formatting
+        run: forge fmt --check
+
+      - name: Run tests
+        run: forge test -vvv
