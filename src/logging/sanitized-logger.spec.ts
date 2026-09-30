@@ -80,6 +80,74 @@ describe('SanitizedLogger', () => {
     });
   });
 
+  describe('redaction', () => {
+    // Assembled at runtime so no key-shaped literal is committed
+    const label = ['PRIVATE', 'KEY'].join(' ');
+    const pem = [
+      `-----BEGIN ${label}-----`,
+      'not-a-key',
+      `-----END ${label}-----`,
+    ].join('\n');
+    const hexKey = `0x${'ab'.repeat(32)}`;
+
+    it('should redact a known secret value from a logged error', () => {
+      const secretLogger = new SanitizedLogger({
+        RELAYER_API_TOKEN: 'hunter2-hunter2',
+      });
+
+      secretLogger.error(
+        'Upstream rejected token hunter2-hunter2',
+        '',
+        'Relayer',
+      );
+
+      expect(stdoutSpy).toHaveBeenCalledWith(
+        '[ERR] Relayer: Upstream rejected token [REDACTED]\n',
+      );
+    });
+
+    it('should redact a PEM private key before keeping the first line', () => {
+      logger.error(`Bad key ${pem}`, '', 'TeeTlsService');
+
+      expect(stdoutSpy).toHaveBeenCalledWith(
+        '[ERR] TeeTlsService: Bad key [REDACTED]\n',
+      );
+    });
+
+    it('should redact hex keys', () => {
+      logger.error(`Cannot parse ${hexKey}`, '', 'Keys');
+
+      expect(stdoutSpy).toHaveBeenCalledWith(
+        '[ERR] Keys: Cannot parse [REDACTED]\n',
+      );
+    });
+
+    it('should redact long base64 values in logs and warnings', () => {
+      const b64 = Buffer.alloc(48, 7).toString('base64');
+
+      logger.log(`key ${b64}`, 'NestFactory');
+      logger.warn(`key ${b64}`, 'NestFactory');
+
+      expect(stdoutSpy).toHaveBeenCalledWith(
+        '[LOG] NestFactory: key [REDACTED]\n',
+      );
+      expect(stdoutSpy).toHaveBeenCalledWith(
+        '[WARN] NestFactory: key [REDACTED]\n',
+      );
+    });
+
+    it('should keep addresses and short values', () => {
+      const address = '0x' + '1'.repeat(40);
+      const quiet = new SanitizedLogger({ SHORT_KEY: 'abc' });
+
+      quiet.error(`abc from ${address}`, '', 'Auth');
+
+      expect(stdoutSpy).toHaveBeenCalledWith(
+        `[ERR] Auth: abc from ${address}\n`,
+      );
+    });
+  });
+
   describe('warn', () => {
     it('should warn messages from safe contexts', () => {
       logger.warn('Deprecation warning', 'NestApplication');
