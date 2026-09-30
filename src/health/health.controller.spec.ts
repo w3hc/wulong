@@ -1,12 +1,16 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { ServiceUnavailableException } from '@nestjs/common';
 import { HealthController } from './health.controller';
+import { KeyDerivationService } from '../keys/key-derivation.service';
 
 describe('HealthController', () => {
   let controller: HealthController;
+  const keys = { isAvailable: jest.fn(() => true) };
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       controllers: [HealthController],
+      providers: [{ provide: KeyDerivationService, useValue: keys }],
     }).compile();
 
     controller = module.get<HealthController>(HealthController);
@@ -39,6 +43,12 @@ describe('HealthController', () => {
   });
 
   describe('ready', () => {
+    it('should be unavailable until the keys are derived', () => {
+      keys.isAvailable.mockReturnValueOnce(false);
+
+      expect(() => controller.ready()).toThrow(ServiceUnavailableException);
+    });
+
     it('should return readiness status', () => {
       const result = controller.ready();
 
