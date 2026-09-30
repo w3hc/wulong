@@ -12,6 +12,7 @@ import { TDX_QUOTE_REPORT_DATA_OFFSET } from './tdx-quote';
 export interface KeyBindingEvidence {
   mlkemPublicKey: string;
   identityPublicKey: string;
+  relayerAddress: string;
   reportData: string;
   keyManifest: SignedKeyManifest;
   /** Base64 DER of the TLS leaf certificate served from inside the enclave. */
@@ -36,6 +37,7 @@ export function verifyKeyBinding(
   const failures: string[] = [];
   const ek = Buffer.from(evidence.mlkemPublicKey, 'base64');
   const identity = Buffer.from(strip0x(evidence.identityPublicKey), 'hex');
+  const relayer = Buffer.from(strip0x(evidence.relayerAddress), 'hex');
   const reportData = Buffer.from(strip0x(evidence.reportData), 'hex');
   const tlsCertificate = evidence.tlsCertificate
     ? Buffer.from(evidence.tlsCertificate, 'base64')
@@ -44,6 +46,7 @@ export function verifyKeyBinding(
   const expected = buildReportData(
     {
       mlkemPublicKey: ek,
+      relayer,
       identityPublicKey: identity,
       tlsCertificateDer: tlsCertificate,
     },
@@ -79,6 +82,11 @@ export function verifyKeyBinding(
   const mlkemPublicKeyHash = `0x${createHash('sha256').update(ek).digest('hex')}`;
   if (manifest.mlkemPublicKeyHash.toLowerCase() !== mlkemPublicKeyHash) {
     failures.push('The key manifest commits to a different ML-KEM key');
+  }
+  if (
+    manifest.relayer.toLowerCase() !== evidence.relayerAddress.toLowerCase()
+  ) {
+    failures.push('The key manifest commits to a different relayer');
   }
   try {
     const signer = verifyTypedData(

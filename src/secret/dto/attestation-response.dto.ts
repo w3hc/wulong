@@ -63,6 +63,13 @@ export class AttestationResponseDto {
 
   @ApiProperty({
     description:
+      "Address of the relayer wallet, which sends Wulong's on-chain transactions. Committed to by reportData and the key manifest",
+    example: '0x602cA51341d6d1ff32b2ce8442c5e807A527CA17',
+  })
+  relayerAddress: string;
+
+  @ApiProperty({
+    description:
       'Leaf TLS certificate served from inside the enclave (base64 DER), committed to by reportData. ' +
       'Clients check it matches the certificate of their TLS session. Absent when TLS terminates outside the enclave.',
     required: false,
@@ -91,4 +98,11 @@ export class AttestationResponseDto {
     type: [String],
   })
   identitySignatureChain: string[];
+
+  @ApiProperty({
+    description:
+      "The relayer key's dstack GetKey signature chain (hex), anchored on the KMS root, so contracts can verify the relayer with ecrecover",
+    type: [String],
+  })
+  relayerSignatureChain: string[];
 }

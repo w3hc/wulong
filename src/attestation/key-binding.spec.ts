@@ -3,7 +3,7 @@ import {
   SigningKey,
   TypedDataEncoder,
   Wallet,
-  ZeroAddress,
+  computeAddress,
   getBytes,
 } from 'ethers';
 import {
@@ -16,6 +16,9 @@ import { buildReportData } from './report-data';
 import { TDX_QUOTE_REPORT_DATA_OFFSET } from './tdx-quote';
 
 const identity = new SigningKey('0x' + '42'.repeat(32));
+const relayer = computeAddress(
+  new SigningKey('0x' + '43'.repeat(32)).publicKey,
+);
 const ek = Buffer.alloc(1568, 0x01);
 const nonce = Buffer.alloc(32, 0x7f);
 
@@ -33,12 +36,13 @@ const evidence = (
   const manifest: KeyManifest = {
     appId: '0x1111111111111111111111111111111111111111',
     mlkemPublicKeyHash: `0x${createHash('sha256').update(ek).digest('hex')}`,
-    relayer: ZeroAddress,
+    relayer,
     epoch: 1,
   };
   const reportData = buildReportData(
     {
       mlkemPublicKey: ek,
+      relayer: getBytes(relayer),
       identityPublicKey: getBytes(identity.publicKey),
       tlsCertificateDer: tlsCertificate,
     },
@@ -47,6 +51,7 @@ const evidence = (
   return {
     mlkemPublicKey: ek.toString('base64'),
     identityPublicKey: identity.publicKey,
+    relayerAddress: relayer,
     reportData: `0x${reportData.toString('hex')}`,
     keyManifest: { manifest, signature: sign(manifest) },
     tlsCertificate: tlsCertificate?.toString('base64'),
@@ -80,6 +85,17 @@ describe('verifyKeyBinding', () => {
     expect(verifyKeyBinding(swapped, { nonce })).toEqual([
       'reportData does not commit to the returned keys and nonce',
       'The key manifest commits to a different ML-KEM key',
+    ]);
+  });
+
+  it('rejects a swapped relayer address', () => {
+    const swapped = evidence({
+      relayerAddress: '0x' + '22'.repeat(20),
+    });
+
+    expect(verifyKeyBinding(swapped, { nonce })).toEqual([
+      'reportData does not commit to the returned keys and nonce',
+      'The key manifest commits to a different relayer',
     ]);
   });
 

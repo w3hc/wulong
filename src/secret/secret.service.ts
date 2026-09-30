@@ -7,7 +7,7 @@ import {
   HttpStatus,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { isAddress } from 'ethers';
+import { getBytes, hexlify, isAddress } from 'ethers';
 import * as fs from 'fs';
 import * as path from 'path';
 import { randomBytes } from 'crypto';
@@ -199,20 +199,32 @@ export class SecretService {
    * one held by the attested code and that its TLS session ends in it.
    * @param nonce Optional 32-byte client challenge for freshness
    * @returns Attestation report, the committed keys, the `report_data`, the
-   * signed key manifest and the identity key's `GetKey` signature chain
+   * signed key manifest and the identity and relayer `GetKey` signature
+   * chains
    * @throws ServiceUnavailableException if the keys have not been derived
    */
   async getAttestation(nonce?: Buffer): Promise<AttestationResponseDto> {
     const mlkemPublicKey = this.keys.getMlKemPublicKey();
     const identityPublicKey = this.keys.getIdentityPublicKey();
+    const relayerAddress = this.keys.getRelayerAddress();
     const keyManifest = this.keys.getKeyManifest();
-    if (!mlkemPublicKey || !identityPublicKey || !keyManifest) {
+    if (
+      !mlkemPublicKey ||
+      !identityPublicKey ||
+      !relayerAddress ||
+      !keyManifest
+    ) {
       throw new ServiceUnavailableException('Encryption keys are unavailable');
     }
 
     const tlsCertificateDer = this.tls.getLeafCertificateDer() ?? undefined;
     const reportData = buildReportData(
-      { mlkemPublicKey, identityPublicKey, tlsCertificateDer },
+      {
+        mlkemPublicKey,
+        relayer: getBytes(relayerAddress),
+        identityPublicKey,
+        tlsCertificateDer,
+      },
       nonce,
     );
     const attestation =
@@ -226,6 +238,7 @@ export class SecretService {
       timestamp: attestation.timestamp,
       mlkemPublicKey: Buffer.from(mlkemPublicKey).toString('base64'),
       identityPublicKey: `0x${Buffer.from(identityPublicKey).toString('hex')}`,
+      relayerAddress,
       tlsCertificate: tlsCertificateDer
         ? Buffer.from(tlsCertificateDer).toString('base64')
         : undefined,
@@ -233,7 +246,10 @@ export class SecretService {
       keyManifest,
       identitySignatureChain: this.keys
         .getIdentitySignatureChain()
-        .map((link) => `0x${Buffer.from(link).toString('hex')}`),
+        .map((link) => hexlify(link)),
+      relayerSignatureChain: this.keys
+        .getRelayerSignatureChain()
+        .map((link) => hexlify(link)),
     };
   }
 

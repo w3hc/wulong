@@ -143,6 +143,9 @@ describe('KeyDerivationService', () => {
       expect(service.getIdentityAddress()).toBe(
         '0xBd6E221AB7C3E8eD8c2DEdeaF7B1132653d6587F',
       );
+      expect(service.getRelayerAddress()).toBe(
+        '0x602cA51341d6d1ff32b2ce8442c5e807A527CA17',
+      );
     });
   });
 
@@ -153,6 +156,39 @@ describe('KeyDerivationService', () => {
 
       expect(hex(a.getMlKemPublicKey()!)).toBe(hex(b.getMlKemPublicKey()!));
       expect(a.getIdentityAddress()).toBe(b.getIdentityAddress());
+      expect(a.getRelayerAddress()).toBe(b.getRelayerAddress());
+    });
+
+    it('keeps the relayer apart from the identity key', async () => {
+      const service = await create();
+
+      expect(service.getRelayerAddress()).not.toBe(
+        service.getIdentityAddress(),
+      );
+    });
+
+    it('uses the GetKey output directly as the relayer private key', async () => {
+      const service = await create();
+      const { key } = await dstack.getKey('wulong/relayer/evm/v1', 'secp256k1');
+
+      expect(service.getRelayerAddress()).toBe(computeAddress(hexlify(key)));
+      expect(computeAddress(hexlify(service.getRelayerPublicKey()!))).toBe(
+        service.getRelayerAddress(),
+      );
+    });
+
+    it('serves the relayer signature chain', async () => {
+      const chain = [new Uint8Array([1]), new Uint8Array([2])];
+      const getKey = dstack.getKey.bind(dstack);
+      dstack.getKey = async (domain, algorithm) => ({
+        ...(await getKey(domain, algorithm)),
+        signatureChain: domain === 'wulong/relayer/evm/v1' ? chain : [],
+      });
+
+      const service = await create();
+
+      expect(service.getRelayerSignatureChain()).toEqual(chain);
+      expect(service.getIdentitySignatureChain()).toEqual([]);
     });
 
     it('exposes the uncompressed identity public key of its address', async () => {
@@ -202,6 +238,7 @@ describe('KeyDerivationService', () => {
       const { manifest, signature } = service.getKeyManifest()!;
 
       expect(manifest.appId).toBe(APP_ID);
+      expect(manifest.relayer).toBe(service.getRelayerAddress());
       expect(manifest.mlkemPublicKeyHash).toBe(
         '0x' + sha256(service.getMlKemPublicKey()!),
       );

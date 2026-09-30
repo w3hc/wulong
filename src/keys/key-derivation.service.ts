@@ -3,7 +3,6 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import {
   SigningKey,
   TypedDataEncoder,
-  ZeroAddress,
   computeAddress,
   getBytes,
   hexlify,
@@ -14,6 +13,7 @@ import { DstackV1Client } from './dstack-v1.client';
 
 export const MLKEM_DOMAIN = 'wulong/mlkem-1024/v1';
 export const IDENTITY_DOMAIN = 'wulong/identity/v1';
+export const RELAYER_DOMAIN = 'wulong/relayer/evm/v1';
 
 const MLKEM_SEED_SALT = 'wulong';
 const MLKEM_SEED_INFO = lengthPrefixed('wulong-mlkem-1024-seed-v1');
@@ -48,7 +48,8 @@ type MlKem = Awaited<ReturnType<typeof createMlKem1024>>;
  * Keys are a deterministic function of the app's KMS-held root key, so they
  * are never generated elsewhere, stored or passed through env, and every
  * instance of the same app gets the same keys. Private keys never leave this
- * service: callers get public keys, decapsulation and manifest signatures.
+ * service: callers get public keys, decapsulation, manifest signatures and
+ * relayer transaction signatures.
  *
  * See docs/KEY_DERIVATION.md.
  */
@@ -60,6 +61,8 @@ export class KeyDerivationService implements OnModuleInit {
   private mlkemSecretKey: Uint8Array | null = null;
   private identity: SigningKey | null = null;
   private identitySignatureChain: Uint8Array[] = [];
+  private relayer: SigningKey | null = null;
+  private relayerSignatureChain: Uint8Array[] = [];
   private keyManifest: SignedKeyManifest | null = null;
 
   constructor(private readonly dstack: DstackV1Client) {}
@@ -91,7 +94,7 @@ export class KeyDerivationService implements OnModuleInit {
       this.logger.warn('Keys derived from the dstack simulator (public root)');
     }
     this.logger.log(
-      `Keys derived: ML-KEM-1024 ${Buffer.from(this.mlkemPublicKey!).toString('base64').substring(0, 32)}..., identity ${this.getIdentityAddress()}`,
+      `Keys derived: ML-KEM-1024 ${Buffer.from(this.mlkemPublicKey!).toString('base64').substring(0, 32)}..., identity ${this.getIdentityAddress()}, relayer ${this.getRelayerAddress()}`,
     );
   }
 
@@ -111,6 +114,12 @@ export class KeyDerivationService implements OnModuleInit {
     const signingKey = new SigningKey(hexlify(identity.key));
     identity.key.fill(0);
 
+    // Used directly as the private key: v1 guarantees a valid secp256k1
+    // scalar, unlike the v0 toViemAccountSecure adapter
+    const relayer = await this.dstack.getKey(RELAYER_DOMAIN, 'secp256k1');
+    const relayerKey = new SigningKey(hexlify(relayer.key));
+    relayer.key.fill(0);
+
     const appId = await this.dstack.getAppId();
 
     this.mlkem = mlkem;
@@ -118,6 +127,8 @@ export class KeyDerivationService implements OnModuleInit {
     this.mlkemSecretKey = secretKey;
     this.identity = signingKey;
     this.identitySignatureChain = identity.signatureChain;
+    this.relayer = relayerKey;
+    this.relayerSignatureChain = relayer.signatureChain;
     this.keyManifest = this.signKeyManifest(appId);
   }
 
@@ -149,6 +160,19 @@ export class KeyDerivationService implements OnModuleInit {
     return this.identitySignatureChain;
   }
 
+  getRelayerAddress(): string | null {
+    return this.relayer ? computeAddress(this.relayer.publicKey) : null;
+  }
+
+  /** Uncompressed secp256k1 relayer public key, 65 bytes. */
+  getRelayerPublicKey(): Uint8Array | null {
+    return this.relayer ? getBytes(this.relayer.publicKey) : null;
+  }
+
+  getRelayerSignatureChain(): Uint8Array[] {
+    return this.relayerSignatureChain;
+  }
+
   /** The key manifest signed at boot, for this CVM's app id. */
   getKeyManifest(): SignedKeyManifest | null {
     return this.keyManifest;
@@ -156,16 +180,15 @@ export class KeyDerivationService implements OnModuleInit {
 
   /**
    * Signs the EIP-712 key manifest binding Wulong's public keys to its app id.
-   * The relayer stays the zero address until the relayer wallet exists.
    */
   signKeyManifest(appId: string, epoch = 1): SignedKeyManifest {
-    if (!this.identity || !this.mlkemPublicKey) {
+    if (!this.identity || !this.mlkemPublicKey || !this.relayer) {
       throw new Error('Keys not derived');
     }
     const manifest: KeyManifest = {
       appId,
       mlkemPublicKeyHash: sha256(this.mlkemPublicKey),
-      relayer: ZeroAddress,
+      relayer: computeAddress(this.relayer.publicKey),
       epoch,
     };
     const digest = TypedDataEncoder.hash(

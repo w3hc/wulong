@@ -412,11 +412,18 @@ async function verifyAttestation(
     const {
       mlkemPublicKey,
       identityPublicKey,
+      relayerAddress,
       reportData,
       keyManifest,
       tlsCertificate,
     } = attestation;
-    if (!mlkemPublicKey || !identityPublicKey || !reportData || !keyManifest) {
+    if (
+      !mlkemPublicKey ||
+      !identityPublicKey ||
+      !relayerAddress ||
+      !reportData ||
+      !keyManifest
+    ) {
       error('The attestation carries no key binding (use /chest/attestation)');
       process.exit(1);
     }
@@ -432,6 +439,7 @@ async function verifyAttestation(
       {
         mlkemPublicKey,
         identityPublicKey,
+        relayerAddress,
         reportData,
         keyManifest,
         tlsCertificate,

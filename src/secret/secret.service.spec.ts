@@ -28,6 +28,7 @@ jest.mock('fs', () => ({
 
 // Mock ethers module
 jest.mock('ethers', () => ({
+  ...jest.requireActual<typeof import('ethers')>('ethers'),
   isAddress: jest.fn(),
 }));
 
@@ -51,12 +52,14 @@ describe('SecretService', () => {
 
   const mlkemPublicKey = new Uint8Array(1568).fill(0x01);
   const identityPublicKey = new Uint8Array(65).fill(0x04);
+  const relayerAddress = '0x602cA51341d6d1ff32b2ce8442c5e807A527CA17';
+  const relayer = new Uint8Array(Buffer.from(relayerAddress.slice(2), 'hex'));
 
   const keyManifest = {
     manifest: {
       appId: '0x1111111111111111111111111111111111111111',
       mlkemPublicKeyHash: '0x' + '22'.repeat(32),
-      relayer: '0x0000000000000000000000000000000000000000',
+      relayer: relayerAddress,
       epoch: 1,
     },
     signature: '0x' + '33'.repeat(65),
@@ -67,6 +70,8 @@ describe('SecretService', () => {
     getIdentityPublicKey: jest.fn(),
     getKeyManifest: jest.fn(),
     getIdentitySignatureChain: jest.fn(),
+    getRelayerAddress: jest.fn(),
+    getRelayerSignatureChain: jest.fn(),
   };
 
   const mockTeeTlsService = {
@@ -716,13 +721,23 @@ describe('SecretService', () => {
         new Uint8Array([0xaa, 0xbb]),
         new Uint8Array([0xcc]),
       ]);
+      mockKeyDerivationService.getRelayerAddress.mockReturnValue(
+        relayerAddress,
+      );
+      mockKeyDerivationService.getRelayerSignatureChain.mockReturnValue([
+        new Uint8Array([0xdd]),
+      ]);
       mockTeePlatformService.generateAttestationReport.mockResolvedValue(
         mockAttestation,
       );
     });
 
     it('quotes the report_data committing to the keys', async () => {
-      const expected = buildReportData({ mlkemPublicKey, identityPublicKey });
+      const expected = buildReportData({
+        mlkemPublicKey,
+        relayer,
+        identityPublicKey,
+      });
 
       const result = await service.getAttestation();
 
@@ -733,10 +748,12 @@ describe('SecretService', () => {
         ...mockAttestation,
         mlkemPublicKey: Buffer.from(mlkemPublicKey).toString('base64'),
         identityPublicKey: `0x${Buffer.from(identityPublicKey).toString('hex')}`,
+        relayerAddress,
         tlsCertificate: undefined,
         reportData: `0x${expected.toString('hex')}`,
         keyManifest,
         identitySignatureChain: ['0xaabb', '0xcc'],
+        relayerSignatureChain: ['0xdd'],
       });
     });
 
@@ -747,6 +764,7 @@ describe('SecretService', () => {
       );
       const expected = buildReportData({
         mlkemPublicKey,
+        relayer,
         identityPublicKey,
         tlsCertificateDer,
       });
@@ -773,19 +791,20 @@ describe('SecretService', () => {
       expect(result.reportData.endsWith(nonce.toString('hex'))).toBe(true);
     });
 
-    it.each(['getMlKemPublicKey', 'getKeyManifest'] as const)(
-      'refuses to attest when %s returns nothing',
-      async (method) => {
-        mockKeyDerivationService[method].mockReturnValue(null);
+    it.each([
+      'getMlKemPublicKey',
+      'getRelayerAddress',
+      'getKeyManifest',
+    ] as const)('refuses to attest when %s returns nothing', async (method) => {
+      mockKeyDerivationService[method].mockReturnValue(null);
 
-        await expect(service.getAttestation()).rejects.toThrow(
-          ServiceUnavailableException,
-        );
-        expect(
-          mockTeePlatformService.generateAttestationReport,
-        ).not.toHaveBeenCalled();
-      },
-    );
+      await expect(service.getAttestation()).rejects.toThrow(
+        ServiceUnavailableException,
+      );
+      expect(
+        mockTeePlatformService.generateAttestationReport,
+      ).not.toHaveBeenCalled();
+    });
 
     it('should propagate errors from TEE platform service', async () => {
       mockTeePlatformService.generateAttestationReport.mockRejectedValue(

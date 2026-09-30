@@ -104,12 +104,14 @@ describe('Chest Endpoints (e2e)', () => {
           manifest: {
             appId: '0x1111111111111111111111111111111111111111',
             mlkemPublicKeyHash: '0x' + '22'.repeat(32),
-            relayer: '0x0000000000000000000000000000000000000000',
+            relayer: '0x' + '55'.repeat(20),
             epoch: 1,
           },
           signature: '0x' + '33'.repeat(65),
         }),
         getIdentitySignatureChain: () => [new Uint8Array([0xaa])],
+        getRelayerAddress: () => '0x' + '55'.repeat(20),
+        getRelayerSignatureChain: () => [new Uint8Array([0xbb])],
       })
       .overrideProvider(TeeTlsService)
       .useValue({
@@ -727,6 +729,7 @@ describe('Chest Endpoints (e2e)', () => {
           const expected = buildReportData(
             {
               mlkemPublicKey: new Uint8Array(1568).fill(0x01),
+              relayer: new Uint8Array(20).fill(0x55),
               identityPublicKey: new Uint8Array(65).fill(0x04),
               tlsCertificateDer: new Uint8Array([0x30, 0x03]),
             },
@@ -736,6 +739,11 @@ describe('Chest Endpoints (e2e)', () => {
           expect(res.body).toHaveProperty('tlsCertificate', 'MAM=');
           expect(res.body).toHaveProperty('keyManifest.manifest.appId');
           expect(res.body).toHaveProperty('identitySignatureChain', ['0xaa']);
+          expect(res.body).toHaveProperty(
+            'relayerAddress',
+            '0x' + '55'.repeat(20),
+          );
+          expect(res.body).toHaveProperty('relayerSignatureChain', ['0xbb']);
         });
     });
 
