@@ -60,6 +60,7 @@ export class SecretService implements OnModuleInit {
   private readonly pendingPath: string;
   private readonly maxBytes: number;
   private writeQueue: Promise<unknown> = Promise.resolve();
+  private chest: Promise<SecretData> | null = null;
   private anchoredSeq = 0n;
 
   constructor(
@@ -133,7 +134,7 @@ export class SecretService implements OnModuleInit {
     if (!this.mlkemEncryptionService.isAvailable()) {
       return;
     }
-    const secretData = await this.loadSecret();
+    const secretData = await this.getChest();
     const rejected = Object.entries(secretData).filter(
       ([slot, entry]) => !this.isAuthentic(slot, entry),
     ).length;
@@ -244,14 +245,11 @@ export class SecretService implements OnModuleInit {
     const slot = this.generateSlot();
 
     // Serialize read-modify-write so concurrent stores don't overwrite each other
-    await this.withWriteLock(async () => {
-      const secretData = await this.loadSecret();
-
-      // Store the entry (encrypted at rest - quantum-safe!)
-      secretData[slot] = this.seal(slot, encryptedPayload, normalizedAddresses);
-
-      await this.saveSecret(secretData);
-    });
+    await this.withWriteLock(() =>
+      this.commit({
+        [slot]: this.seal(slot, encryptedPayload, normalizedAddresses),
+      }),
+    );
 
     return slot;
   }
@@ -284,8 +282,7 @@ export class SecretService implements OnModuleInit {
       );
     }
 
-    // Load secret data
-    const secretData = await this.loadSecret();
+    const secretData = await this.getChest();
 
     // A slot the caller does not own answers like one that does not exist,
     // so callers cannot probe which slots are in use. An entry that fails
@@ -473,6 +470,37 @@ export class SecretService implements OnModuleInit {
     const run = this.writeQueue.then(fn, fn);
     this.writeQueue = run.catch(() => undefined);
     return run;
+  }
+
+  /**
+   * Returns the in-memory chest, reading the file the first time only. A
+   * failed read is retried on the next call.
+   */
+  private getChest(): Promise<SecretData> {
+    this.chest ??= this.loadSecret().catch((error: unknown) => {
+      this.chest = null;
+      throw error;
+    });
+    return this.chest;
+  }
+
+  /**
+   * Writes the chest with `changes` applied, then makes it the in-memory
+   * chest, so a failed write leaves memory as it was. A `null` change
+   * removes its slot. Must run under the write lock.
+   * @param changes The entries to set or remove, by slot
+   */
+  private async commit(changes: Record<string, SecretEntry | null>) {
+    const next: SecretData = { ...(await this.getChest()) };
+    for (const [slot, entry] of Object.entries(changes)) {
+      if (entry) {
+        next[slot] = entry;
+      } else {
+        delete next[slot];
+      }
+    }
+    await this.saveSecret(next);
+    this.chest = Promise.resolve(next);
   }
 
   /**
